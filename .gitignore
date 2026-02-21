@@ -1,0 +1,30 @@
+# OS files
+.DS_Store
+
+# Go build/test artifacts
+bin/
+build/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+coverage.out
+
+# Logs and temp
+*.log
+tmp/
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local GPX data and generated output
+data/
+out/
