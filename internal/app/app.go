@@ -147,6 +147,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 				Verbose:             cfg.Verbose,
 				IncludeRunMetadata:  cfg.IncludeRunMetadata,
 				JSONReport:          cfg.JSONReport,
+				MetricsCSV:          cfg.MetricsCSV,
 			},
 			Totals:   totals,
 			Files:    fileStats,
@@ -155,6 +156,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 		if err := report.WriteJSON(cfg.JSONReport, jr); err != nil {
 			fmt.Fprintf(stderr, "write --json-report: %v\n", err)
+			return 2
+		}
+	}
+	if cfg.MetricsCSV != "" {
+		if err := report.AppendMetricsCSV(cfg.MetricsCSV, start, totals.PointsIn, totals.PointsOut, cfg.Workers, totals.BytesIn, totals.BytesOut, elapsed); err != nil {
+			fmt.Fprintf(stderr, "write --metrics-csv: %v\n", err)
 			return 2
 		}
 	}

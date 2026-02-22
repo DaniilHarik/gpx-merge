@@ -83,6 +83,20 @@ func TestParseJSONReportPath(t *testing.T) {
 	}
 }
 
+func TestParseMetricsCSVPath(t *testing.T) {
+	t.Parallel()
+	temp := t.TempDir()
+	metricsPath := filepath.Join(temp, "reports", "metrics.csv")
+
+	cfg, err := Parse([]string{"--input", temp, "--metrics-csv", metricsPath})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if cfg.MetricsCSV != metricsPath {
+		t.Fatalf("MetricsCSV = %q, want %q", cfg.MetricsCSV, metricsPath)
+	}
+}
+
 func TestParseSortSegmentsByTime(t *testing.T) {
 	t.Parallel()
 	temp := t.TempDir()

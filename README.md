@@ -16,6 +16,7 @@ Large GPX collections (from watches, bike computers, phones, etc.) are usually f
 - Segment discontinuity warnings and optional track splitting
 - Optional segment reordering by first timestamp (`--sort-segments-by-time`)
 - Human-readable and JSON run reports
+- Optional append-only CSV run metrics log (`--metrics-csv`)
 
 ## Internal Design
 
@@ -65,6 +66,12 @@ Write JSON report:
 
 ```bash
 ./gpx-merge --input ./data --json-report ./out/run.json
+```
+
+Append run metrics CSV:
+
+```bash
+./gpx-merge --input ./data --metrics-csv ./out/metrics.csv
 ```
 
 ## Documentation

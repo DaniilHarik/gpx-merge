@@ -27,6 +27,7 @@ type ConfigSnapshot struct {
 	Verbose             bool    `json:"verbose"`
 	IncludeRunMetadata  bool    `json:"include_run_metadata"`
 	JSONReport          string  `json:"json_report,omitempty"`
+	MetricsCSV          string  `json:"metrics_csv,omitempty"`
 }
 
 type Totals struct {

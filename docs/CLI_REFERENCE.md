@@ -25,6 +25,7 @@ gpx-merge [flags]
 | `--verbose` | bool | `false` | Print per-file optimization stats |
 | `--include-run-metadata` | bool | `false` | Include generation stats in output metadata |
 | `--json-report` | string | empty | Write machine-readable stats to a JSON file |
+| `--metrics-csv` | string | empty | Append run metrics rows to a CSV file |
 
 ## Behavior Notes
 
@@ -33,6 +34,7 @@ gpx-merge [flags]
 - Output ordering is deterministic, even with concurrent workers.
 - If `--sort-segments-by-time` is enabled and a track has non-parseable timestamps, that track remains in original order.
 - Internal package split: orchestration is in `internal/app`, while per-file processing/aggregation are in `internal/processor`.
+- `--metrics-csv` writes a header on first write and appends one row per completed run (`started_at_utc,points_in,points_out,workers,duration_ms,mb_in,mb_out`).
 
 ## Exit Codes
 
@@ -50,6 +52,7 @@ The summary includes:
 - Elapsed time and throughput
 - Failed file list (if any)
 - Discontinuity warnings (if any)
+- Optional appended CSV row with points in/out, workers, duration, and MB in/out
 
 ## Example
 
@@ -63,5 +66,6 @@ The summary includes:
   --precision 6 \
   --split-track-gap 1000 \
   --sort-segments-by-time \
-  --json-report ./out/run.json
+  --json-report ./out/run.json \
+  --metrics-csv ./out/metrics.csv
 ```

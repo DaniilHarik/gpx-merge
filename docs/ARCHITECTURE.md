@@ -2,13 +2,14 @@
 
 ## Runtime Summary
 
-`gpx-merge` processes files in five stages:
+`gpx-merge` processes files in six stages:
 
 1. Parse and validate CLI config (`internal/cli/config.go`)
 2. Discover `.gpx` files recursively (`internal/discovery/discovery.go`)
 3. Run concurrent per-file processing (`internal/pipeline/run.go` + `internal/processor/process_file.go`)
 4. Aggregate successful tracks and statistics (`internal/processor/aggregate.go`)
-5. Write merged GPX and reports (`internal/gpx/write.go`, `internal/report/report.go`)
+5. Write merged GPX and human/JSON reports (`internal/gpx/write.go`, `internal/report/report.go`)
+6. Optionally append run metrics CSV rows (`internal/report/metrics_csv.go`)
 
 The app entrypoint is `internal/app/app.go`.
 
@@ -71,6 +72,7 @@ sequenceDiagram
     participant Agg as processor.AggregateResults
     participant Write as gpx.WriteMerged or gpx.MeasureMerged
     participant Report as report.PrintSummary or report.WriteJSON
+    participant Metrics as report.AppendMetricsCSV
 
     Note over CLI,Pipe: Setup
     CLI->>App: parse config + discover files
@@ -110,6 +112,9 @@ sequenceDiagram
     Agg-->>App: totals + tracks + file stats
     App->>Write: write merged GPX (or measure in dry-run)
     App->>Report: print summary/errors/warnings (+ optional JSON)
+    opt --metrics-csv set
+        App->>Metrics: append row (started_at_utc, points_in, points_out, workers, duration_ms, mb_in, mb_out)
+    end
     App-->>CLI: merged output + report
 ```
 

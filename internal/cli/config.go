@@ -37,6 +37,7 @@ type Config struct {
 	Verbose             bool
 	IncludeRunMetadata  bool
 	JSONReport          string
+	MetricsCSV          string
 }
 
 type UsageError struct {
@@ -77,6 +78,7 @@ func Parse(args []string) (Config, error) {
 	fs.BoolVar(&cfg.Verbose, "verbose", false, "per-file optimization stats")
 	fs.BoolVar(&cfg.IncludeRunMetadata, "include-run-metadata", false, "include generation stats in metadata")
 	fs.StringVar(&cfg.JSONReport, "json-report", "", "write machine-readable stats to a JSON file")
+	fs.StringVar(&cfg.MetricsCSV, "metrics-csv", "", "append run metrics to a CSV file")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, &UsageError{Message: err.Error(), Usage: usageText(fs, &buf)}
@@ -144,6 +146,11 @@ func validate(cfg Config) error {
 	if cfg.JSONReport != "" {
 		if dir := filepath.Dir(cfg.JSONReport); dir == "" {
 			return errors.New("invalid --json-report path")
+		}
+	}
+	if cfg.MetricsCSV != "" {
+		if dir := filepath.Dir(cfg.MetricsCSV); dir == "" {
+			return errors.New("invalid --metrics-csv path")
 		}
 	}
 	return nil

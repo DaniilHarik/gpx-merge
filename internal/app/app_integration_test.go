@@ -3,11 +3,14 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunMixedValidInvalidFiles(t *testing.T) {
@@ -160,6 +163,121 @@ func TestRunSortSegmentsByTimeFixesOutOfOrderSegments(t *testing.T) {
 	if got := strings.Count(string(outBytes), "<trk>"); got != 1 {
 		t.Fatalf("track count = %d, want 1", got)
 	}
+}
+
+func TestRunAppendsMetricsCSV(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "track.gpx"), []byte(testGPX("CSV Metrics", 40)), 0o644); err != nil {
+		t.Fatalf("write track.gpx: %v", err)
+	}
+
+	metricsPath := filepath.Join(root, "logs", "metrics.csv")
+
+	var stdout1 bytes.Buffer
+	var stderr1 bytes.Buffer
+	code1 := Run(context.Background(), []string{
+		"--input", root,
+		"--dry-run",
+		"--workers", "2",
+		"--metrics-csv", metricsPath,
+	}, &stdout1, &stderr1)
+	if code1 != 0 {
+		t.Fatalf("first run code = %d, want 0\nstderr=%s", code1, stderr1.String())
+	}
+
+	var stdout2 bytes.Buffer
+	var stderr2 bytes.Buffer
+	code2 := Run(context.Background(), []string{
+		"--input", root,
+		"--dry-run",
+		"--workers", "5",
+		"--metrics-csv", metricsPath,
+	}, &stdout2, &stderr2)
+	if code2 != 0 {
+		t.Fatalf("second run code = %d, want 0\nstderr=%s", code2, stderr2.String())
+	}
+
+	f, err := os.Open(metricsPath)
+	if err != nil {
+		t.Fatalf("open metrics csv: %v", err)
+	}
+	defer f.Close()
+
+	rows, err := csv.NewReader(f).ReadAll()
+	if err != nil {
+		t.Fatalf("read metrics csv: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("row count = %d, want 3", len(rows))
+	}
+
+	wantHeader := []string{"started_at_utc", "points_in", "points_out", "workers", "duration_ms", "mb_in", "mb_out"}
+	if !equalStringSlices(rows[0], wantHeader) {
+		t.Fatalf("header = %v, want %v", rows[0], wantHeader)
+	}
+
+	if rows[1][1] != "40" {
+		t.Fatalf("first row points_in = %q, want 40", rows[1][1])
+	}
+	if rows[1][3] != "2" {
+		t.Fatalf("first row workers = %q, want 2", rows[1][3])
+	}
+	if rows[2][1] != "40" {
+		t.Fatalf("second row points_in = %q, want 40", rows[2][1])
+	}
+	if rows[2][3] != "5" {
+		t.Fatalf("second row workers = %q, want 5", rows[2][3])
+	}
+
+	for i := 1; i <= 2; i++ {
+		if _, err := time.Parse(time.RFC3339, rows[i][0]); err != nil {
+			t.Fatalf("row %d timestamp parse error: %v", i, err)
+		}
+		pointsOut, err := strconv.Atoi(rows[i][2])
+		if err != nil {
+			t.Fatalf("row %d points_out parse error: %v", i, err)
+		}
+		if pointsOut <= 0 || pointsOut > 40 {
+			t.Fatalf("row %d points_out = %d, want 1..40", i, pointsOut)
+		}
+
+		durationMs, err := strconv.ParseInt(rows[i][4], 10, 64)
+		if err != nil {
+			t.Fatalf("row %d duration parse error: %v", i, err)
+		}
+		if durationMs < 0 {
+			t.Fatalf("row %d duration = %d, want >= 0", i, durationMs)
+		}
+
+		mbIn, err := strconv.ParseFloat(rows[i][5], 64)
+		if err != nil {
+			t.Fatalf("row %d mb_in parse error: %v", i, err)
+		}
+		if mbIn <= 0 {
+			t.Fatalf("row %d mb_in = %f, want > 0", i, mbIn)
+		}
+
+		mbOut, err := strconv.ParseFloat(rows[i][6], 64)
+		if err != nil {
+			t.Fatalf("row %d mb_out parse error: %v", i, err)
+		}
+		if mbOut <= 0 {
+			t.Fatalf("row %d mb_out = %f, want > 0", i, mbOut)
+		}
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func testGPX(name string, points int) string {
