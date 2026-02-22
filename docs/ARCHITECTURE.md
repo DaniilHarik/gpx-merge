@@ -48,6 +48,7 @@ This guarantees reproducible merged ordering regardless of worker scheduling.
 - Producer/consumer pipeline: feeder goroutine sends discovered files over `jobs` while workers consume.
 - Fan-out: one input stream (`jobs`) is processed concurrently by `N` worker goroutines.
 - Fan-in: workers publish `pipeline.Result` values into a shared `results` channel.
+- Confinement by ownership: each worker keeps per-file processing state local to its goroutine and communicates only via channels; the collector goroutine exclusively owns and mutates the final `[]Result` buffer before sort.
 - Coordinated shutdown: a closer goroutine waits on `sync.WaitGroup` and closes `results` exactly once.
 - Cooperative cancellation: feeder and workers stop early when `ctx.Done()` is signaled.
 - Deterministic completion barrier: collector buffers all results and sorts by `File.Index` before returning.
