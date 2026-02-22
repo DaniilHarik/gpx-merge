@@ -107,7 +107,7 @@ Use a two-stage lossy optimization tuned for viewer performance:
 
 1. Geometry simplification:
    - Algorithm: Douglas-Peucker (or Visvalingam as optional future strategy).
-   - Distance metric: great-circle/haversine approximation in meters.
+   - Distance metric: projected planar (equirectangular-style) point-to-segment distance in meters.
    - Controls: `--simplify` and `--max-error`.
 2. Serialization compaction:
    - Round latitude/longitude to `--precision` decimals.
@@ -123,20 +123,22 @@ Quality guardrails:
 
 ## 9. Concurrency Design
 
-Pipeline architecture (bounded-memory):
+Pipeline architecture:
 
-1. Discoverer goroutine:
+1. Discover phase:
    - Walks input tree, builds deterministic file list.
 2. Worker pool (`--workers`):
    - Parse + optimize files in parallel.
-3. Aggregator/writer goroutine:
-   - Collects results, reorders by source index, writes merged output sequentially.
+3. Collector phase:
+   - Collects all results, reorders by source index.
+4. Aggregation + write phase:
+   - Aggregates totals/tracks, then writes merged output sequentially.
 
 Design constraints:
 
 1. Output must be deterministic regardless of worker scheduling.
-2. Memory bounded via buffered channels and per-file processing.
-3. Backpressure when writer lags workers.
+2. Pipeline buffering is bounded (`jobs` + `results` channels), while full run results/tracks are accumulated before final write.
+3. No writer-stage backpressure during worker processing because writing starts after result collection.
 4. Context cancellation support on fatal error or SIGINT.
 5. No intermediate on-disk conversion artifacts; only final output is written.
 6. Architectural split follows Functional Core, Imperative Shell:
@@ -161,7 +163,7 @@ Targets on a modern laptop (baseline expectations):
 1. At least 3x faster than single-threaded mode for large datasets.
 2. At least 40% point reduction on dense precision traces (dataset-dependent).
 3. Merged output opens perceptibly faster in common GPX viewers vs original multi-file set.
-4. Peak memory should scale with workers, not total dataset size.
+4. Peak memory scales with worker buffers plus accumulated successful results/tracks prior to final write.
 
 ## 12. Error Handling
 
@@ -169,7 +171,7 @@ Targets on a modern laptop (baseline expectations):
 2. Final exit code:
    - `0` if all files processed successfully.
    - `1` if one or more files failed.
-   - `2` for configuration/usage errors.
+   - `2` for configuration/usage errors and runtime setup/output/reporting errors.
 3. Per-file processing errors are recorded and reported; processing continues for remaining files.
 
 ## 13. Observability
