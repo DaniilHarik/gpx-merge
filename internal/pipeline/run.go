@@ -50,9 +50,9 @@ func Run(ctx context.Context, files []File, workers int, process func(context.Co
 		defer close(jobs)
 		for _, f := range files {
 			select {
+			case jobs <- f:
 			case <-ctx.Done():
 				return
-			case jobs <- f:
 			}
 		}
 	}()
