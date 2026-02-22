@@ -8,12 +8,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
 const (
 	defaultInput     = "./data"
 	defaultOutput    = "./out/merged_optimized.gpx"
+	defaultWorkers   = 16
 	defaultSimplify  = 0.8
 	defaultMaxError  = 1.5
 	defaultSplitGap  = 1000.0
@@ -64,7 +64,7 @@ func Parse(args []string) (Config, error) {
 
 	fs.StringVar(&cfg.Input, "input", defaultInput, "root folder containing GPX files")
 	fs.StringVar(&cfg.Output, "output", defaultOutput, "merged GPX output path")
-	fs.IntVar(&cfg.Workers, "workers", runtime.NumCPU(), "worker pool size")
+	fs.IntVar(&cfg.Workers, "workers", defaultWorkers, "worker pool size")
 	fs.Float64Var(&cfg.SimplifyMeters, "simplify", defaultSimplify, "base simplification tolerance in meters")
 	fs.Float64Var(&cfg.MaxErrorMeters, "max-error", defaultMaxError, "hard cap for allowed geometric deviation")
 	fs.Float64Var(&cfg.SplitTrackGapMeters, "split-track-gap", defaultSplitGap, "split a track into multiple <trk> when segment endpoint gaps exceed this many meters (0 disables)")

@@ -64,7 +64,7 @@ gpx-merge \
 
 ### Optional flags
 
-1. `--workers <n>`: worker pool size (default: `runtime.NumCPU()`)
+1. `--workers <n>`: worker pool size (default: `16`)
 2. `--simplify <meters>`: base simplification tolerance in meters
 3. `--max-error <meters>`: hard cap for allowed geometric deviation
 4. `--precision <digits>`: coordinate decimal precision in output (default: `6`)

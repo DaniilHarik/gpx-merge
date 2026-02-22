@@ -11,6 +11,7 @@ Large GPX collections (from watches, bike computers, phones, etc.) are usually f
 - Recursive GPX discovery under `--input`
 - Douglas-Peucker simplification with hard max-error guard
 - Deterministic output order even with concurrent workers
+- Default worker pool size of `16`, chosen from local benchmarking on Apple MacBook M1 Pro (override with `--workers`)
 - Optional preservation of `<time>` and `<ele>`
 - Segment discontinuity warnings and optional track splitting
 - Optional segment reordering by first timestamp (`--sort-segments-by-time`)
