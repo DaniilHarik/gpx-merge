@@ -74,6 +74,8 @@ Append run metrics CSV:
 ./gpx-merge --input ./data --metrics-csv ./out/metrics.csv
 ```
 
+The CSV is append-only and includes `started_at_utc,points_in,points_out,workers,duration_ms,mb_in,mb_out`.
+
 ## Documentation
 
 - CLI flags, defaults, exit codes, and output details: [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md)
