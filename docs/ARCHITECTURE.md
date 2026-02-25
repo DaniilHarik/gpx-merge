@@ -48,10 +48,66 @@ This guarantees reproducible merged ordering regardless of worker scheduling.
 - Producer/consumer pipeline: feeder goroutine sends discovered files over `jobs` while workers consume.
 - Fan-out: one input stream (`jobs`) is processed concurrently by `N` worker goroutines.
 - Fan-in: workers publish `pipeline.Result` values into a shared `results` channel.
+- Channel topology rationale: this runtime uses one shared `results` channel (not per-worker `[]chan Result`); see **Shared Fan-In Channel vs Channel Slice** below for the decision rationale and trade-offs.
 - Confinement by ownership: each worker keeps per-file processing state local to its goroutine and communicates only via channels; the collector goroutine exclusively owns and mutates the final `[]Result` buffer before sort.
 - Coordinated shutdown: a closer goroutine waits on `sync.WaitGroup` and closes `results` exactly once.
 - Cooperative cancellation: feeder and workers stop early when `ctx.Done()` is signaled.
 - Deterministic completion barrier: collector buffers all results and sorts by `File.Index` before returning.
+
+### Shared Fan-In Channel vs Channel Slice
+
+#### Summary
+
+`gpx-merge` uses standard fan-out/fan-in with one shared results channel, not a per-worker channel slice. This keeps worker coordination and shutdown simpler while preserving deterministic output order.
+
+#### Context
+
+A question came up while reviewing `internal/pipeline/run.go`:
+
+- Why not use `[]chan Result` for fan-in, as seen in some Go examples?
+
+Current topology in the project:
+
+- One `jobs` channel for fan-out to N workers.
+- One shared `results` channel for fan-in from N workers.
+- One closer goroutine closes `results` after `wg.Wait()`.
+- Collector gathers all results and sorts by `File.Index` before return.
+
+#### Decision
+
+Use one shared fan-in channel for this pipeline.
+
+#### Rationale
+
+- Work is homogeneous across workers; no worker-specific output lanes are required.
+- Determinism is guaranteed by post-collection sort (`File.Index`), so per-worker channels are unnecessary for ordering.
+- Shutdown ownership is simple: one closer after worker completion, avoiding multi-channel close/merge complexity.
+- Operational complexity stays lower than slice-based fan-in designs (for example, multiplex loops or `reflect.Select`).
+
+#### When Channel Slices Make Sense
+
+Use `[]chan` when channels represent distinct lanes and behavior:
+
+1. Sharded or affinity queues where each worker owns state/cache/partition.
+2. Priority lanes (`high`, `normal`, `bulk`) with explicit service control.
+3. Per-source isolation so one noisy producer cannot starve others.
+4. Per-lane ordering guarantees with custom merge semantics.
+5. Independent lifecycle control for specific workers/lanes.
+
+#### Trade-Off Rule of Thumb
+
+- If workers are interchangeable and outputs are normalized later, prefer one shared fan-in channel.
+- If lanes have distinct policy, ownership, or ordering contracts, channel slices are often justified.
+
+#### Source Pointers
+
+- `internal/pipeline/run.go`
+- `docs/ARCHITECTURE.md` (Concurrency Patterns section)
+
+#### Capture Metadata
+
+- Captured from engineering discussion on 2026-02-24.
+- Topic type: architecture/concurrency rationale.
 
 ## Processing Sequence
 
