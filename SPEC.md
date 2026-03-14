@@ -144,7 +144,7 @@ Design constraints:
 6. Architectural split follows Functional Core, Imperative Shell:
    - `internal/app` owns imperative orchestration and side effects.
    - `internal/processor` and `internal/optimize` own transformation/aggregation core logic.
-   - `internal/pipeline` owns worker-pool concurrency mechanics.
+   - `internal/pool` owns worker-pool concurrency mechanics.
 
 ## 10. Output GPX Requirements
 

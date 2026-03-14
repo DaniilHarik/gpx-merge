@@ -8,7 +8,7 @@ import (
 	"gpx-merge/internal/cli"
 	"gpx-merge/internal/gpx"
 	"gpx-merge/internal/optimize"
-	"gpx-merge/internal/pipeline"
+	"gpx-merge/internal/pool"
 	"gpx-merge/internal/report"
 )
 
@@ -49,7 +49,7 @@ func (e *fileError) Unwrap() error {
 	return e.Err
 }
 
-func (p FileProcessor) Process(ctx context.Context, f pipeline.File) (any, error) {
+func (p FileProcessor) Process(ctx context.Context, f pool.File) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, &fileError{Stage: "canceled", Path: f.RelPath, Err: err}
 	}

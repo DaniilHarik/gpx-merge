@@ -6,7 +6,7 @@
 
 1. Parse and validate CLI config (`internal/cli/config.go`)
 2. Discover `.gpx` files recursively (`internal/discovery/discovery.go`)
-3. Run concurrent per-file processing (`internal/pipeline/run.go` + `internal/processor/process_file.go`)
+3. Run concurrent per-file processing (`internal/pool/run.go` + `internal/processor/process_file.go`)
 4. Aggregate successful tracks and statistics (`internal/processor/aggregate.go`)
 5. Write merged GPX and human/JSON reports (`internal/gpx/write.go`, `internal/report/report.go`)
 6. Optionally append run metrics CSV rows (`internal/report/metrics_csv.go`)
@@ -17,7 +17,7 @@ The app entrypoint is `internal/app/app.go`.
 
 - Parsing: `internal/gpx/parse.go`, `internal/gpx/types.go`
 - Optimization: `internal/optimize/simplify.go`, `internal/optimize/round.go`
-- Pipeline orchestration: `internal/pipeline/run.go`
+- Pipeline orchestration: `internal/pool/run.go`
 - Per-file processing: `internal/processor/process_file.go`, `internal/processor/track_optimize.go`, `internal/processor/track_segments.go`
 - Aggregation and totals: `internal/processor/aggregate.go`
 - Writer: `internal/gpx/write.go`
@@ -27,8 +27,8 @@ The app entrypoint is `internal/app/app.go`.
 The runtime now follows a **Functional Core, Imperative Shell** split:
 
 - Imperative shell: `internal/app/app.go` performs side effects and orchestration (signals/context wiring, CLI parse, file discovery, filesystem writes, report emission, exit codes).
-- Functional core: `internal/processor/*` and `internal/optimize/*` own deterministic data transforms (track optimization, segment ordering checks, warnings, and aggregation from `[]pipeline.Result`).
-- Concurrency boundary: `internal/pipeline/run.go` is a reusable worker-pool engine that isolates goroutine/channel lifecycle from domain logic.
+- Functional core: `internal/processor/*` and `internal/optimize/*` own deterministic data transforms (track optimization, segment ordering checks, warnings, and aggregation from `[]pool.Result`).
+- Concurrency boundary: `internal/pool/run.go` is a reusable worker-pool engine that isolates goroutine/channel lifecycle from domain logic.
 
 ## Determinism + Concurrency
 
@@ -42,12 +42,12 @@ This guarantees reproducible merged ordering regardless of worker scheduling.
 
 ## Concurrency Patterns
 
-`gpx-merge` uses a small set of explicit concurrency patterns in `internal/pipeline/run.go`:
+`gpx-merge` uses a small set of explicit concurrency patterns in `internal/pool/run.go`:
 
 - Bounded worker pool: `workers` controls fixed parallelism for per-file processing.
 - Producer/consumer pipeline: feeder goroutine sends discovered files over `jobs` while workers consume.
 - Fan-out: one input stream (`jobs`) is processed concurrently by `N` worker goroutines.
-- Fan-in: workers publish `pipeline.Result` values into a shared `results` channel.
+- Fan-in: workers publish `pool.Result` values into a shared `results` channel.
 - Channel topology rationale: this runtime uses one shared `results` channel (not per-worker `[]chan Result`); see **Shared Fan-In Channel vs Channel Slice** below for the decision rationale and trade-offs.
 - Confinement by ownership: each worker keeps per-file processing state local to its goroutine and communicates only via channels; the collector goroutine exclusively owns and mutates the final `[]Result` buffer before sort.
 - Coordinated shutdown: a closer goroutine waits on `sync.WaitGroup` and closes `results` exactly once.
@@ -62,7 +62,7 @@ This guarantees reproducible merged ordering regardless of worker scheduling.
 
 #### Context
 
-A question came up while reviewing `internal/pipeline/run.go`:
+A question came up while reviewing `internal/pool/run.go`:
 
 - Why not use `[]chan Result` for fan-in, as seen in some Go examples?
 
@@ -101,7 +101,7 @@ Use `[]chan` when channels represent distinct lanes and behavior:
 
 #### Source Pointers
 
-- `internal/pipeline/run.go`
+- `internal/pool/run.go`
 - `docs/ARCHITECTURE.md` (Concurrency Patterns section)
 
 #### Capture Metadata
@@ -116,7 +116,7 @@ sequenceDiagram
     autonumber
     actor CLI
     participant App as app.Run (shell)
-    participant Pipe as pipeline.Run
+    participant Pipe as pool.Run
     participant Feed as feeder goroutine
     participant W1 as worker (1..N)
     participant Proc as processor.FileProcessor.Process
@@ -136,7 +136,7 @@ sequenceDiagram
     App->>App: build processor.NewFileProcessor(cfg, optOpts)
     App->>Pipe: Run(ctx, files, workers, fileProc.Process)
 
-    Note over Pipe,Close: Pipeline startup
+    Note over Pipe,Close: Worker pool startup
     Pipe->>Feed: start feeder
     Pipe->>W1: start workers
     Pipe->>Close: start closer (wait for workers)
@@ -179,9 +179,9 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A["app.Run caller goroutine"] --> B["pipeline.Run caller goroutine"]
+    A["app.Run caller goroutine"] --> B["pool.Run caller goroutine"]
 
-    subgraph PR["inside pipeline.Run"]
+    subgraph PR["inside pool.Run"]
         B --> C["jobs channel"]
         B --> D["results channel buffered workers x2"]
         B --> E["spawn feeder goroutine"]

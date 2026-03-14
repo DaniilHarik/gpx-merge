@@ -10,9 +10,9 @@ Key files and responsibilities:
 - `internal/app/app.go` keeps orchestration in `Run(...)`.
 - Per-file processing logic is in `internal/processor/process_file.go` (`processor.FileProcessor.Process`).
 - Post-pipeline aggregation is in `internal/processor/aggregate.go` (`processor.AggregateResults`).
-- `internal/pipeline/run.go` is the generic concurrency engine.
+- `internal/pool/run.go` is the generic concurrency engine.
 
-The full data flow through `pipeline.Run` involves four roles. The **feeder** goroutine ranges over the input `files` slice and sends each `File` into the unbuffered `jobs` channel, stopping early if the context is canceled. The **N worker** goroutines each range over `jobs`, call `process(ctx, f)`, and send the result into the buffered `results` channel — or exit on cancellation. The **closer** goroutine calls `wg.Wait()` to block until all workers exit, then closes `results`. The **collector** (the main goroutine) ranges over `results` until it is closed, then sorts the collected slice by `File.Index` and returns it.
+The full data flow through `pool.Run` involves four roles. The **feeder** goroutine ranges over the input `files` slice and sends each `File` into the unbuffered `jobs` channel, stopping early if the context is canceled. The **N worker** goroutines each range over `jobs`, call `process(ctx, f)`, and send the result into the buffered `results` channel — or exit on cancellation. The **closer** goroutine calls `wg.Wait()` to block until all workers exit, then closes `results`. The **collector** (the main goroutine) ranges over `results` until it is closed, then sorts the collected slice by `File.Index` and returns it.
 
 ## 1. Prep (10 min)
 
@@ -29,7 +29,7 @@ Expected:
 
 ## 2. Map the concurrency graph (20 min)
 
-Open `internal/pipeline/run.go` and `internal/app/app.go`, then identify:
+Open `internal/pool/run.go` and `internal/app/app.go`, then identify:
 
 - Where workers start (line 32–47 of `run.go`).
 - Where jobs are produced (feeder goroutine, lines 49–58).
@@ -64,7 +64,7 @@ Mini-task:
 
 Expected:
 
-- You mention final sort by `File.Index` in `internal/pipeline/run.go`. Workers finish in arbitrary order, so the collector receives results in arrival order. The sort at lines 70–72 unconditionally restores `File.Index` order regardless of how many workers ran.
+- You mention final sort by `File.Index` in `internal/pool/run.go`. Workers finish in arbitrary order, so the collector receives results in arrival order. The sort at lines 70–72 unconditionally restores `File.Index` order regardless of how many workers ran.
 
 Follow-up: what would happen if `results` had a buffer size of 0? Trace the effect on the closer goroutine's `wg.Wait()`.
 
@@ -109,7 +109,7 @@ The four-step path:
 Focus:
 
 - `select { case <-ctx.Done(): return ... }` in feeder goroutine in the same file.
-- Worker send-or-cancel select in `internal/pipeline/run.go`.
+- Worker send-or-cancel select in `internal/pool/run.go`.
 - App root signal context in `internal/app/app.go` (`signal.NotifyContext`).
 
 Extra mini-task:
@@ -126,7 +126,7 @@ Extra mini-task:
 
 Focus:
 
-- `wg.Wait()` then `close(results)` in `internal/pipeline/run.go`.
+- `wg.Wait()` then `close(results)` in `internal/pool/run.go`.
 
 Mini-task:
 
@@ -147,7 +147,7 @@ Run:
 go test ./... -run TestRunDeterministicOrder
 ```
 
-Focus file: `internal/pipeline/order_test.go`
+Focus file: `internal/pool/order_test.go`
 
 Note: `order_test.go` shares a single `*rand.Rand` across 4 concurrently-running goroutines (lines 19–23). `math/rand.Rand` is not goroutine-safe. Run `go test -race ./...` to see the data race. Fix: give each worker closure its own `rand.New(rand.NewSource(...))`.
 
@@ -190,6 +190,6 @@ Expected:
 
 ## Optional follow-up exercises
 
-- Add `context.WithTimeout` support around `pipeline.Run`. Add tests for timeout-driven cancellation and partial result behavior.
-- Fix the data race in `internal/pipeline/order_test.go` and confirm `go test -race ./...` passes clean.
+- Add `context.WithTimeout` support around `pool.Run`. Add tests for timeout-driven cancellation and partial result behavior.
+- Fix the data race in `internal/pool/order_test.go` and confirm `go test -race ./...` passes clean.
 - Change the `results` buffer size to 0 (unbuffered) and explain what deadlock you observe and why.

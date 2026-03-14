@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"gpx-merge/internal/gpx"
-	"gpx-merge/internal/pipeline"
+	"gpx-merge/internal/pool"
 	"gpx-merge/internal/report"
 )
 
@@ -19,7 +19,7 @@ type RunAggregation struct {
 	WarningsOut []report.WarningItem
 }
 
-func AggregateResults(results []pipeline.Result, filesScanned int, verbose bool, stdout io.Writer) RunAggregation {
+func AggregateResults(results []pool.Result, filesScanned int, verbose bool, stdout io.Writer) RunAggregation {
 	totals := report.Totals{FilesScanned: filesScanned}
 	allTracks := make([]gpx.Track, 0)
 	fileStats := make([]report.FileStat, 0, len(results))

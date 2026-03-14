@@ -22,7 +22,7 @@ Large GPX collections (from watches, bike computers, phones, etc.) are usually f
 
 - `internal/app` is the orchestration shell (CLI lifecycle, I/O, reporting, exit codes).
 - `internal/processor` and `internal/optimize` hold core transformation and aggregation logic.
-- `internal/pipeline` provides the reusable worker-pool runtime used by the app shell.
+- `internal/pool` provides the reusable worker-pool runtime used by the app shell.
 
 ## Requirements
 

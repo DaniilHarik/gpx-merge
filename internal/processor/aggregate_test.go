@@ -8,21 +8,21 @@ import (
 	"time"
 
 	"gpx-merge/internal/gpx"
-	"gpx-merge/internal/pipeline"
+	"gpx-merge/internal/pool"
 	"gpx-merge/internal/report"
 )
 
-func makeSuccessResult(index int, relPath string, payload filePayload) pipeline.Result {
-	return pipeline.Result{
-		File:     pipeline.File{Index: index, RelPath: relPath},
+func makeSuccessResult(index int, relPath string, payload filePayload) pool.Result {
+	return pool.Result{
+		File:     pool.File{Index: index, RelPath: relPath},
 		Payload:  payload,
 		Duration: time.Millisecond,
 	}
 }
 
-func makeErrorResult(index int, relPath string, err error) pipeline.Result {
-	return pipeline.Result{
-		File:     pipeline.File{Index: index, RelPath: relPath},
+func makeErrorResult(index int, relPath string, err error) pool.Result {
+	return pool.Result{
+		File:     pool.File{Index: index, RelPath: relPath},
 		Err:      err,
 		Duration: time.Millisecond,
 	}
@@ -30,7 +30,7 @@ func makeErrorResult(index int, relPath string, err error) pipeline.Result {
 
 func TestAggregateResults_AllSuccess(t *testing.T) {
 	t.Parallel()
-	results := []pipeline.Result{
+	results := []pool.Result{
 		makeSuccessResult(0, "a.gpx", filePayload{
 			Tracks:       []gpx.Track{{Name: "A"}},
 			PointsIn:     100,
@@ -92,7 +92,7 @@ func TestAggregateResults_AllSuccess(t *testing.T) {
 
 func TestAggregateResults_AllErrors(t *testing.T) {
 	t.Parallel()
-	results := []pipeline.Result{
+	results := []pool.Result{
 		makeErrorResult(0, "a.gpx", &fileError{Stage: "parse", Err: errors.New("unexpected EOF")}),
 		makeErrorResult(1, "b.gpx", &fileError{Stage: "stat", Err: errors.New("no such file")}),
 	}
@@ -126,7 +126,7 @@ func TestAggregateResults_AllErrors(t *testing.T) {
 
 func TestAggregateResults_Mixed(t *testing.T) {
 	t.Parallel()
-	results := []pipeline.Result{
+	results := []pool.Result{
 		makeSuccessResult(0, "good.gpx", filePayload{
 			Tracks:   []gpx.Track{{Name: "Good"}},
 			PointsIn: 10,
@@ -153,9 +153,9 @@ func TestAggregateResults_Mixed(t *testing.T) {
 
 func TestAggregateResults_WrongPayloadType(t *testing.T) {
 	t.Parallel()
-	results := []pipeline.Result{
+	results := []pool.Result{
 		{
-			File:    pipeline.File{Index: 0, RelPath: "x.gpx"},
+			File:    pool.File{Index: 0, RelPath: "x.gpx"},
 			Payload: "not a filePayload",
 		},
 	}
@@ -175,7 +175,7 @@ func TestAggregateResults_WrongPayloadType(t *testing.T) {
 
 func TestAggregateResults_NonFileErrorUsesProcessStage(t *testing.T) {
 	t.Parallel()
-	results := []pipeline.Result{
+	results := []pool.Result{
 		makeErrorResult(0, "a.gpx", errors.New("generic error")),
 	}
 
@@ -188,7 +188,7 @@ func TestAggregateResults_NonFileErrorUsesProcessStage(t *testing.T) {
 
 func TestAggregateResults_VerboseWritesToStdout(t *testing.T) {
 	t.Parallel()
-	results := []pipeline.Result{
+	results := []pool.Result{
 		makeSuccessResult(0, "v.gpx", filePayload{
 			Tracks:    []gpx.Track{{Name: "V"}},
 			PointsIn:  10,
@@ -211,7 +211,7 @@ func TestAggregateResults_VerboseWritesToStdout(t *testing.T) {
 
 func TestAggregateResults_WarningsCollected(t *testing.T) {
 	t.Parallel()
-	results := []pipeline.Result{
+	results := []pool.Result{
 		makeSuccessResult(0, "w.gpx", filePayload{
 			Tracks:    []gpx.Track{{Name: "W"}},
 			PointsIn:  10,

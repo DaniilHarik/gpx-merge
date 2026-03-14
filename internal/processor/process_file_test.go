@@ -11,7 +11,7 @@ import (
 
 	"gpx-merge/internal/cli"
 	"gpx-merge/internal/optimize"
-	"gpx-merge/internal/pipeline"
+	"gpx-merge/internal/pool"
 )
 
 func defaultConfig() cli.Config {
@@ -32,13 +32,13 @@ func defaultOptOpts() optimize.Options {
 	}
 }
 
-func writeTestGPX(t *testing.T, dir, filename, content string) pipeline.File {
+func writeTestGPX(t *testing.T, dir, filename, content string) pool.File {
 	t.Helper()
 	abs := filepath.Join(dir, filename)
 	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", filename, err)
 	}
-	return pipeline.File{Index: 0, RelPath: filename, AbsPath: abs}
+	return pool.File{Index: 0, RelPath: filename, AbsPath: abs}
 }
 
 func validGPX(name string, nPoints int) string {
@@ -59,7 +59,7 @@ func TestProcess_CanceledContext(t *testing.T) {
 	cancel()
 
 	p := NewFileProcessor(defaultConfig(), defaultOptOpts())
-	_, err := p.Process(ctx, pipeline.File{Index: 0, RelPath: "any.gpx", AbsPath: "/any.gpx"})
+	_, err := p.Process(ctx, pool.File{Index: 0, RelPath: "any.gpx", AbsPath: "/any.gpx"})
 
 	if err == nil {
 		t.Fatal("expected error for canceled context, got nil")
@@ -76,7 +76,7 @@ func TestProcess_CanceledContext(t *testing.T) {
 func TestProcess_FileNotFound(t *testing.T) {
 	t.Parallel()
 	p := NewFileProcessor(defaultConfig(), defaultOptOpts())
-	_, err := p.Process(context.Background(), pipeline.File{
+	_, err := p.Process(context.Background(), pool.File{
 		Index:   0,
 		RelPath: "missing.gpx",
 		AbsPath: "/nonexistent/path/missing.gpx",

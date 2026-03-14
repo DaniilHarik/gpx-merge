@@ -15,7 +15,7 @@ import (
 	"gpx-merge/internal/discovery"
 	"gpx-merge/internal/gpx"
 	"gpx-merge/internal/optimize"
-	"gpx-merge/internal/pipeline"
+	"gpx-merge/internal/pool"
 	"gpx-merge/internal/processor"
 	"gpx-merge/internal/report"
 )
@@ -52,9 +52,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	files := make([]pipeline.File, 0, len(found))
+	files := make([]pool.File, 0, len(found))
 	for _, f := range found {
-		files = append(files, pipeline.File{Index: f.Index, RelPath: f.RelPath, AbsPath: f.AbsPath})
+		files = append(files, pool.File{Index: f.Index, RelPath: f.RelPath, AbsPath: f.AbsPath})
 	}
 
 	optOpts := optimize.Options{
@@ -64,7 +64,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	fileProc := processor.NewFileProcessor(cfg, optOpts)
-	results := pipeline.Run(ctx, files, cfg.Workers, fileProc.Process)
+	results := pool.Run(ctx, files, cfg.Workers, fileProc.Process)
 	agg := processor.AggregateResults(results, len(found), cfg.Verbose, stdout)
 	totals := agg.Totals
 	allTracks := agg.AllTracks
