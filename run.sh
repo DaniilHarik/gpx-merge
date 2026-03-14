@@ -6,4 +6,4 @@ OUTPUT_FILE="${OUTPUT_FILE:-./out/All.gpx}"
 
 mkdir -p "$(dirname "$OUTPUT_FILE")"
 
-go run . --input "$INPUT_DIR" --output "$OUTPUT_FILE" --metrics-csv ./out/metrics.csv "$@"
+go run ./cmd/gpx-merge --input "$INPUT_DIR" --output "$OUTPUT_FILE" --metrics-csv ./out/metrics.csv "$@"
