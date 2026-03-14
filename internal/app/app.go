@@ -141,30 +141,34 @@ func writeOutput(cfg cli.Config, allTracks []gpx.Track, writeOpts gpx.WriteOptio
 	return bytesOut, nil
 }
 
+func configSnapshot(cfg cli.Config) report.ConfigSnapshot {
+	return report.ConfigSnapshot{
+		Input:               cfg.Input,
+		Output:              cfg.Output,
+		Workers:             cfg.Workers,
+		SimplifyMeters:      cfg.SimplifyMeters,
+		MaxErrorMeters:      cfg.MaxErrorMeters,
+		SplitTrackGapMeters: cfg.SplitTrackGapMeters,
+		SortSegmentsByTime:  cfg.SortSegmentsByTime,
+		Precision:           cfg.Precision,
+		MinPoints:           cfg.MinPoints,
+		KeepTime:            cfg.KeepTime,
+		KeepEle:             cfg.KeepEle,
+		DryRun:              cfg.DryRun,
+		Verbose:             cfg.Verbose,
+		IncludeRunMetadata:  cfg.IncludeRunMetadata,
+		JSONReport:          cfg.JSONReport,
+		MetricsCSV:          cfg.MetricsCSV,
+	}
+}
+
 func writeReports(cfg cli.Config, start time.Time, elapsed time.Duration, totals report.Totals, fileStats []report.FileStat, errorsOut []report.ErrorItem, warningsOut []report.WarningItem) error {
 	if cfg.JSONReport != "" {
 		jr := report.JSONReport{
 			StartedAt:  start.UTC().Format(time.RFC3339),
 			FinishedAt: time.Now().UTC().Format(time.RFC3339),
 			DurationMs: elapsed.Milliseconds(),
-			Config: report.ConfigSnapshot{
-				Input:               cfg.Input,
-				Output:              cfg.Output,
-				Workers:             cfg.Workers,
-				SimplifyMeters:      cfg.SimplifyMeters,
-				MaxErrorMeters:      cfg.MaxErrorMeters,
-				SplitTrackGapMeters: cfg.SplitTrackGapMeters,
-				SortSegmentsByTime:  cfg.SortSegmentsByTime,
-				Precision:           cfg.Precision,
-				MinPoints:           cfg.MinPoints,
-				KeepTime:            cfg.KeepTime,
-				KeepEle:             cfg.KeepEle,
-				DryRun:              cfg.DryRun,
-				Verbose:             cfg.Verbose,
-				IncludeRunMetadata:  cfg.IncludeRunMetadata,
-				JSONReport:          cfg.JSONReport,
-				MetricsCSV:          cfg.MetricsCSV,
-			},
+			Config: configSnapshot(cfg),
 			Totals:   totals,
 			Files:    fileStats,
 			Errors:   errorsOut,
