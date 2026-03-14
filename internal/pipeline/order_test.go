@@ -16,9 +16,9 @@ func TestRunDeterministicOrder(t *testing.T) {
 		{Index: 3, RelPath: "d.gpx", AbsPath: "d.gpx"},
 	}
 
-	rng := rand.New(rand.NewSource(42))
 	results := Run(context.Background(), files, 4, func(ctx context.Context, f File) (any, error) {
 		_ = ctx
+		rng := rand.New(rand.NewSource(int64(42 + f.Index)))
 		time.Sleep(time.Duration(rng.Intn(25)) * time.Millisecond)
 		return f.RelPath, nil
 	})
