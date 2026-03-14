@@ -1,7 +1,9 @@
 # OS files
 .DS_Store
+Thumbs.db
 
 # Go build/test artifacts
+gpx-merge
 bin/
 build/
 dist/
@@ -14,6 +16,7 @@ dist/
 *.out
 *.prof
 coverage.out
+coverage.html
 
 # Logs and temp
 *.log
