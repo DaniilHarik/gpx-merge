@@ -83,35 +83,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	writeOpts.MetadataDesc = processor.MetadataDesc(totals)
 
-	if cfg.DryRun {
-		bytesOut, measureErr := gpx.MeasureMerged(allTracks, writeOpts)
-		if measureErr != nil {
-			fmt.Fprintf(stderr, "measure merged output: %v\n", measureErr)
-			return 2
-		}
-		totals.BytesOut = bytesOut
-	} else {
-		if err := os.MkdirAll(filepath.Dir(cfg.Output), 0o755); err != nil {
-			fmt.Fprintf(stderr, "create output directory: %v\n", err)
-			return 2
-		}
-		f, createErr := os.Create(cfg.Output)
-		if createErr != nil {
-			fmt.Fprintf(stderr, "create output file: %v\n", createErr)
-			return 2
-		}
-		bytesOut, writeErr := gpx.WriteMerged(f, allTracks, writeOpts)
-		closeErr := f.Close()
-		if writeErr != nil {
-			fmt.Fprintf(stderr, "write output: %v\n", writeErr)
-			return 2
-		}
-		if closeErr != nil {
-			fmt.Fprintf(stderr, "finalize output: %v\n", closeErr)
-			return 2
-		}
-		totals.BytesOut = bytesOut
+	bytesOut, writeErr := writeOutput(cfg, allTracks, writeOpts)
+	if writeErr != nil {
+		fmt.Fprintln(stderr, writeErr)
+		return 2
 	}
+	totals.BytesOut = bytesOut
 
 	elapsed := time.Since(start)
 	if elapsed > 0 {
@@ -126,6 +103,45 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	report.PrintFailedFiles(stdout, errorsOut)
 	report.PrintWarnings(stdout, warningsOut)
 
+	if err := writeReports(cfg, start, elapsed, totals, fileStats, errorsOut, warningsOut); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+
+	if totals.FilesFailed > 0 {
+		return 1
+	}
+	return 0
+}
+
+func writeOutput(cfg cli.Config, allTracks []gpx.Track, writeOpts gpx.WriteOptions) (int64, error) {
+	if cfg.DryRun {
+		bytesOut, err := gpx.MeasureMerged(allTracks, writeOpts)
+		if err != nil {
+			return 0, fmt.Errorf("measure merged output: %w", err)
+		}
+		return bytesOut, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cfg.Output), 0o755); err != nil {
+		return 0, fmt.Errorf("create output directory: %w", err)
+	}
+	f, err := os.Create(cfg.Output)
+	if err != nil {
+		return 0, fmt.Errorf("create output file: %w", err)
+	}
+	bytesOut, writeErr := gpx.WriteMerged(f, allTracks, writeOpts)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return 0, fmt.Errorf("write output: %w", writeErr)
+	}
+	if closeErr != nil {
+		return 0, fmt.Errorf("finalize output: %w", closeErr)
+	}
+	return bytesOut, nil
+}
+
+func writeReports(cfg cli.Config, start time.Time, elapsed time.Duration, totals report.Totals, fileStats []report.FileStat, errorsOut []report.ErrorItem, warningsOut []report.WarningItem) error {
 	if cfg.JSONReport != "" {
 		jr := report.JSONReport{
 			StartedAt:  start.UTC().Format(time.RFC3339),
@@ -155,19 +171,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			Warnings: warningsOut,
 		}
 		if err := report.WriteJSON(cfg.JSONReport, jr); err != nil {
-			fmt.Fprintf(stderr, "write --json-report: %v\n", err)
-			return 2
+			return fmt.Errorf("write --json-report: %w", err)
 		}
 	}
 	if cfg.MetricsCSV != "" {
 		if err := report.AppendMetricsCSV(cfg.MetricsCSV, start, totals.PointsIn, totals.PointsOut, cfg.Workers, totals.BytesIn, totals.BytesOut, elapsed); err != nil {
-			fmt.Fprintf(stderr, "write --metrics-csv: %v\n", err)
-			return 2
+			return fmt.Errorf("write --metrics-csv: %w", err)
 		}
 	}
-
-	if totals.FilesFailed > 0 {
-		return 1
-	}
-	return 0
+	return nil
 }
