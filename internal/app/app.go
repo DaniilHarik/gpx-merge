@@ -179,7 +179,15 @@ func writeReports(cfg cli.Config, start time.Time, elapsed time.Duration, totals
 		}
 	}
 	if cfg.MetricsCSV != "" {
-		if err := report.AppendMetricsCSV(cfg.MetricsCSV, start, totals.PointsIn, totals.PointsOut, cfg.Workers, totals.BytesIn, totals.BytesOut, elapsed); err != nil {
+		if err := report.AppendMetricsCSV(cfg.MetricsCSV, report.MetricsRow{
+			StartedAt: start,
+			PointsIn:  totals.PointsIn,
+			PointsOut: totals.PointsOut,
+			Workers:   cfg.Workers,
+			BytesIn:   totals.BytesIn,
+			BytesOut:  totals.BytesOut,
+			Elapsed:   elapsed,
+		}); err != nil {
 			return fmt.Errorf("write --metrics-csv: %w", err)
 		}
 	}
