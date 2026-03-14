@@ -3,6 +3,7 @@ package gpx
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -161,5 +162,52 @@ func TestParseFile_FileNotFound(t *testing.T) {
 	_, err := ParseFile("/nonexistent/path/file.gpx", "file.gpx")
 	if err == nil {
 		t.Fatal("expected error for missing file, got nil")
+	}
+}
+
+func TestParseFile_InvalidCoordinates(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	cases := []struct {
+		name    string
+		lat     string
+		lon     string
+		wantErr string
+	}{
+		{"lat too high", "91.0", "24.0", "invalid latitude"},
+		{"lat too low", "-91.0", "24.0", "invalid latitude"},
+		{"lon too high", "58.0", "181.0", "invalid longitude"},
+		{"lon too low", "58.0", "-181.0", "invalid longitude"},
+		{"lat exactly 90 is valid", "90.0", "0.0", ""},
+		{"lat exactly -90 is valid", "-90.0", "0.0", ""},
+		{"lon exactly 180 is valid", "0.0", "180.0", ""},
+		{"lon exactly -180 is valid", "0.0", "-180.0", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			content := `<?xml version="1.0"?>` +
+				`<gpx xmlns="http://www.topografix.com/GPX/1/1">` +
+				`<trk><trkseg>` +
+				`<trkpt lat="` + tc.lat + `" lon="` + tc.lon + `"></trkpt>` +
+				`<trkpt lat="58.1" lon="24.1"></trkpt>` +
+				`</trkseg></trk></gpx>`
+			p := writeGPXFile(t, dir, tc.name+".gpx", content)
+			_, err := ParseFile(p, tc.name+".gpx")
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
+				}
+			}
+		})
 	}
 }

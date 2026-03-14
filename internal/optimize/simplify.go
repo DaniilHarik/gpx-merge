@@ -3,9 +3,9 @@ package optimize
 import (
 	"math"
 	"sort"
-)
 
-const earthRadiusMeters = 6371000.0
+	"gpx-merge/internal/geo"
+)
 
 type Coord struct {
 	Lat float64
@@ -102,8 +102,8 @@ func project(points []Coord) [][2]float64 {
 	for i, p := range points {
 		latRad := radians(p.Lat)
 		lonRad := radians(p.Lon)
-		x := earthRadiusMeters * lonRad * cosRef
-		y := earthRadiusMeters * latRad
+		x := geo.EarthRadiusMeters * lonRad * cosRef
+		y := geo.EarthRadiusMeters * latRad
 		out[i] = [2]float64{x, y}
 	}
 	return out

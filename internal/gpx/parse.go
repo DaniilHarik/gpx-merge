@@ -71,6 +71,12 @@ func ParseFile(path string, relPath string) ([]Track, error) {
 		for _, seg := range trk.Segments {
 			pts := make([]Point, 0, len(seg.Points))
 			for _, p := range seg.Points {
+				if p.Lat < -90 || p.Lat > 90 {
+					return nil, fmt.Errorf("invalid latitude %.6f: must be in [-90, 90]", p.Lat)
+				}
+				if p.Lon < -180 || p.Lon > 180 {
+					return nil, fmt.Errorf("invalid longitude %.6f: must be in [-180, 180]", p.Lon)
+				}
 				pts = append(pts, Point{
 					Lat:  p.Lat,
 					Lon:  p.Lon,
