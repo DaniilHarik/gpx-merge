@@ -2,8 +2,8 @@ package processor
 
 import (
 	"fmt"
-	"math"
 
+	"gpx-merge/internal/geo"
 	"gpx-merge/internal/gpx"
 	"gpx-merge/internal/optimize"
 )
@@ -57,21 +57,8 @@ func segmentDistanceMeters(points []gpx.Point) float64 {
 	}
 	total := 0.0
 	for i := 1; i < len(points); i++ {
-		total += haversineMeters(points[i-1].Lat, points[i-1].Lon, points[i].Lat, points[i].Lon)
+		total += geo.HaversineMeters(points[i-1].Lat, points[i-1].Lon, points[i].Lat, points[i].Lon)
 	}
 	return total
 }
 
-func haversineMeters(lat1, lon1, lat2, lon2 float64) float64 {
-	const earthRadiusMeters = 6371000.0
-	lat1Rad := lat1 * math.Pi / 180
-	lat2Rad := lat2 * math.Pi / 180
-	dLat := (lat2 - lat1) * math.Pi / 180
-	dLon := (lon2 - lon1) * math.Pi / 180
-
-	sinLat := math.Sin(dLat / 2)
-	sinLon := math.Sin(dLon / 2)
-	a := sinLat*sinLat + math.Cos(lat1Rad)*math.Cos(lat2Rad)*sinLon*sinLon
-	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-	return earthRadiusMeters * c
-}

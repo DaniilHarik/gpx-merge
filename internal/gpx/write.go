@@ -4,10 +4,10 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"math"
 	"strconv"
 	"time"
 
+	"gpx-merge/internal/geo"
 	"gpx-merge/internal/optimize"
 )
 
@@ -200,7 +200,7 @@ func splitSegmentsByGap(segments []Segment, maxGapMeters float64) [][]Segment {
 func segmentEndpointGapMeters(a, b Segment) float64 {
 	endA := a.Points[len(a.Points)-1]
 	startB := b.Points[0]
-	return haversineMeters(endA.Lat, endA.Lon, startB.Lat, startB.Lon)
+	return geo.HaversineMeters(endA.Lat, endA.Lon, startB.Lat, startB.Lon)
 }
 
 func trackNamePart(base string, idx int, total int) string {
@@ -208,20 +208,6 @@ func trackNamePart(base string, idx int, total int) string {
 		return base
 	}
 	return fmt.Sprintf("%s (part %d)", base, idx+1)
-}
-
-func haversineMeters(lat1, lon1, lat2, lon2 float64) float64 {
-	const earthRadiusMeters = 6371000.0
-	lat1Rad := lat1 * math.Pi / 180
-	lat2Rad := lat2 * math.Pi / 180
-	dLat := (lat2 - lat1) * math.Pi / 180
-	dLon := (lon2 - lon1) * math.Pi / 180
-
-	sinLat := math.Sin(dLat / 2)
-	sinLon := math.Sin(dLon / 2)
-	a := sinLat*sinLat + math.Cos(lat1Rad)*math.Cos(lat2Rad)*sinLon*sinLon
-	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-	return earthRadiusMeters * c
 }
 
 func writeTextElement(enc *xml.Encoder, name, value string) error {

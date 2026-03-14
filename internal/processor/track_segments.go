@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"gpx-merge/internal/geo"
 	"gpx-merge/internal/gpx"
 	"gpx-merge/internal/report"
 )
@@ -26,7 +27,7 @@ func fileWarnings(path string, tracks []gpx.Track, splitGapMeters float64) []rep
 			}
 			a := prev.Points[len(prev.Points)-1]
 			b := next.Points[0]
-			gapMeters := haversineMeters(a.Lat, a.Lon, b.Lat, b.Lon)
+			gapMeters := geo.HaversineMeters(a.Lat, a.Lon, b.Lat, b.Lon)
 			if gapMeters > maxGapMeters {
 				maxGapMeters = gapMeters
 			}
