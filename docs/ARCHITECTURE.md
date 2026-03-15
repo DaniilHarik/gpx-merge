@@ -45,7 +45,6 @@ This guarantees reproducible merged ordering regardless of worker scheduling.
 `gpx-merge` uses a small set of explicit concurrency patterns in `internal/pool/run.go`:
 
 - Bounded worker pool: `workers` controls fixed parallelism for per-file processing.
-- Producer/consumer pipeline: feeder goroutine sends discovered files over `jobs` while workers consume.
 - Fan-out: one input stream (`jobs`) is processed concurrently by `N` worker goroutines.
 - Fan-in: workers publish `pool.Result` values into a shared `results` channel.
 - Channel topology rationale: this runtime uses one shared `results` channel (not per-worker `[]chan Result`); see **Shared Fan-In Channel vs Channel Slice** below for the decision rationale and trade-offs.
@@ -105,7 +104,7 @@ Current topology in the project:
 
 #### Decision
 
-Use one shared fan-in channel for this pipeline.
+Use one shared fan-in channel for this worker pool.
 
 #### Rationale
 
@@ -129,15 +128,6 @@ Use `[]chan` when channels represent distinct lanes and behavior:
 - If workers are interchangeable and outputs are normalized later, prefer one shared fan-in channel.
 - If lanes have distinct policy, ownership, or ordering contracts, channel slices are often justified.
 
-#### Source Pointers
-
-- `internal/pool/run.go`
-- `docs/ARCHITECTURE.md` (Concurrency Patterns section)
-
-#### Capture Metadata
-
-- Captured from engineering discussion on 2026-02-24.
-- Topic type: architecture/concurrency rationale.
 
 ## Processing Sequence
 
@@ -158,7 +148,7 @@ sequenceDiagram
     participant Close as closer goroutine
     participant Agg as processor.AggregateResults
     participant Write as gpx.WriteMerged or gpx.MeasureMerged
-    participant Report as report.PrintSummary or report.WriteJSON
+    participant Report as report.PrintSummary/PrintFailedFiles/PrintWarnings/WriteJSON
     participant Metrics as report.AppendMetricsCSV
 
     Note over CLI,Pipe: Setup
