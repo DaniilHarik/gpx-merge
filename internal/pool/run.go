@@ -25,7 +25,12 @@ func Run(ctx context.Context, files []File, workers int, process func(context.Co
 		workers = 1
 	}
 
-	jobs := make(chan File)
+	jobs := make(chan File, len(files))
+	for _, f := range files {
+		jobs <- f
+	}
+	close(jobs)
+
 	results := make(chan Result, workers*2)
 
 	var wg sync.WaitGroup
@@ -45,17 +50,6 @@ func Run(ctx context.Context, files []File, workers int, process func(context.Co
 			}
 		}()
 	}
-
-	go func() {
-		defer close(jobs)
-		for _, f := range files {
-			select {
-			case jobs <- f:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
 
 	go func() {
 		wg.Wait()

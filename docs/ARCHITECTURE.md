@@ -50,7 +50,7 @@ This guarantees reproducible merged ordering regardless of worker scheduling.
 - Channel topology rationale: this runtime uses one shared `results` channel (not per-worker `[]chan Result`); see **Shared Fan-In Channel vs Channel Slice** below for the decision rationale and trade-offs.
 - Confinement by ownership: each worker keeps per-file processing state local to its goroutine and communicates only via channels; the collector goroutine exclusively owns and mutates the final `[]Result` buffer before sort.
 - Coordinated shutdown: a closer goroutine waits on `sync.WaitGroup` and closes `results` exactly once.
-- Cooperative cancellation: feeder and workers stop early when `ctx.Done()` is signaled.
+- Cooperative cancellation: workers stop early via send-or-cancel `select` when `ctx.Done()` fires; `process` receives `ctx` for in-flight cancellation.
 - Deterministic completion barrier: collector buffers all results and sorts by `File.Index` before returning.
 
 ### Worker Pool vs Pipeline Pattern
@@ -137,7 +137,6 @@ sequenceDiagram
     actor CLI
     participant App as app.Run (shell)
     participant Pipe as pool.Run
-    participant Feed as feeder goroutine
     participant W1 as worker (1..N)
     participant Proc as processor.FileProcessor.Process
     participant Parse as gpx.ParseFile
@@ -157,13 +156,13 @@ sequenceDiagram
     App->>Pipe: Run(ctx, files, workers, fileProc.Process)
 
     Note over Pipe,Close: Worker pool startup
-    Pipe->>Feed: start feeder
+    Pipe->>Pipe: pre-buffer all files into jobs channel (synchronous, before goroutines start)
     Pipe->>W1: start workers
     Pipe->>Close: start closer (wait for workers)
 
-    Note over Feed,Main: Steady-state processing
+    Note over W1,Main: Steady-state processing
     loop each input file
-        Feed->>W1: jobs <- File
+        W1->>W1: dequeue File from pre-buffered jobs channel
         W1->>Proc: Process(ctx, file)
         Proc->>Parse: parse tracks
         alt --sort-segments-by-time
@@ -178,8 +177,7 @@ sequenceDiagram
     end
 
     alt ctx canceled (SIGINT/SIGTERM/timeout)
-        Pipe-->>Feed: stop enqueue
-        Pipe-->>W1: stop work/send
+        Pipe-->>W1: process(ctx) returns early; send-or-cancel select exits worker
     end
 
     Close->>Main: close(results) after wg.Wait()
@@ -202,15 +200,13 @@ flowchart TD
     A["app.Run caller goroutine"] --> B["pool.Run caller goroutine"]
 
     subgraph PR["inside pool.Run"]
-        B --> C["jobs channel"]
+        B --> C["jobs channel pre-buffered to len(files) filled synchronously"]
         B --> D["results channel buffered workers x2"]
-        B --> E["spawn feeder goroutine"]
         B --> F["spawn worker goroutines 1..N"]
         B --> G["spawn closer goroutine"]
         B --> H["collector loop in caller goroutine"]
 
-        E --> I["enqueue files to jobs or stop on ctx done"]
-        I --> C
+        C --> F
 
         F --> J["read job call process build Result"]
         J --> K["send Result to results or exit on ctx done"]
