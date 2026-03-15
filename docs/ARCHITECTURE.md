@@ -17,7 +17,7 @@ The app entrypoint is `internal/app/app.go`.
 
 - Parsing: `internal/gpx/parse.go`, `internal/gpx/types.go`
 - Optimization: `internal/optimize/simplify.go`, `internal/optimize/round.go`
-- Pipeline orchestration: `internal/pool/run.go`
+- Worker pool: `internal/pool/run.go`
 - Per-file processing: `internal/processor/process_file.go`, `internal/processor/track_optimize.go`, `internal/processor/track_segments.go`
 - Aggregation and totals: `internal/processor/aggregate.go`
 - Writer: `internal/gpx/write.go`
@@ -53,6 +53,36 @@ This guarantees reproducible merged ordering regardless of worker scheduling.
 - Coordinated shutdown: a closer goroutine waits on `sync.WaitGroup` and closes `results` exactly once.
 - Cooperative cancellation: feeder and workers stop early when `ctx.Done()` is signaled.
 - Deterministic completion barrier: collector buffers all results and sorts by `File.Index` before returning.
+
+### Worker Pool vs Pipeline Pattern
+
+`gpx-merge` uses a **worker pool** (fan-out/fan-in), not a pipeline. The distinction matters when reasoning about concurrency design.
+
+| | Worker Pool | Pipeline |
+|---|---|---|
+| Stages | 1 | N chained |
+| Work units | Independent | Flow through stages |
+| Concurrency | N workers do the same thing | N stages overlap in time |
+| Result ordering | Lost — re-sorted by index | Preserved naturally |
+| Back-pressure | Via buffered channel capacity | Automatic between stages |
+
+**Worker pool** — all workers apply the same function to independent inputs:
+```
+jobs ──► worker 1 ──►
+     ──► worker 2 ──► results
+     ──► worker 3 ──►
+```
+
+**Pipeline** — distinct stages connected by channels, each running concurrently:
+```
+parse ──ch1──► optimize ──ch2──► write
+```
+
+#### Why worker pool fits here
+
+Each GPX file is processed fully and independently: parse → sort segments → optimize → measure all happen sequentially inside one `processor.FileProcessor.Process` call. The stages are not independent bottlenecks that would benefit from overlapping across files. A pipeline would add channel coordination overhead with no throughput gain.
+
+A pipeline would be worth considering if parsing were significantly slower than optimization and you wanted stage 2 to begin on file N while stage 1 was still working on file N+1.
 
 ### Shared Fan-In Channel vs Channel Slice
 
@@ -203,6 +233,15 @@ flowchart TD
         H --> M["sort collected results by File.Index and return"]
     end
 ```
+
+## Input Validation
+
+Coordinate bounds are validated during parsing in `internal/gpx/parse.go`, immediately before a point is appended to the segment buffer:
+
+- Latitude must be in `[-90, 90]`; values outside this range return an error of the form `invalid latitude <value>: must be in [-90, 90]`.
+- Longitude must be in `[-180, 180]`; values outside this range return an error of the form `invalid longitude <value>: must be in [-180, 180]`.
+
+Boundary values (`±90` lat, `±180` lon) are valid. An out-of-bounds point causes `ParseFile` to return immediately, which surfaces as a per-file error through the worker pool and is counted in the exit-code model below.
 
 ## Segment Discontinuity Handling
 
