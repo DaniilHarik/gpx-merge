@@ -137,7 +137,7 @@ Pipeline architecture:
 Design constraints:
 
 1. Output must be deterministic regardless of worker scheduling.
-2. The `jobs` channel is pre-buffered to `len(files)` and filled synchronously before workers start; the `results` channel is bounded to `workers × 2`. Full run results/tracks are accumulated before final write.
+2. The `jobs` channel is pre-buffered to `len(files)` and filled synchronously before workers start. Workers write results directly to a pre-allocated `collected` slice at their file's index; no results channel. Full run results/tracks are available immediately after `wg.Wait()` returns.
 3. No writer-stage backpressure during worker processing because writing starts after result collection.
 4. Context cancellation support on fatal error or SIGINT.
 5. No intermediate on-disk conversion artifacts; only final output is written.

@@ -45,31 +45,28 @@ This guarantees reproducible merged ordering regardless of worker scheduling.
 `gpx-merge` uses a small set of explicit concurrency patterns in `internal/pool/run.go`:
 
 - Bounded worker pool: `workers` controls fixed parallelism for per-file processing.
-- Fan-out: one input stream (`jobs`) is processed concurrently by `N` worker goroutines.
-- Fan-in: workers publish `pool.Result` values into a shared `results` channel.
-- Channel topology rationale: this runtime uses one shared `results` channel (not per-worker `[]chan Result`); see **Shared Fan-In Channel vs Channel Slice** below for the decision rationale and trade-offs.
-- Confinement by ownership: each worker keeps per-file processing state local to its goroutine and communicates only via channels; the collector goroutine exclusively owns and mutates the final `[]Result` buffer before sort.
-- Coordinated shutdown: a closer goroutine waits on `sync.WaitGroup` and closes `results` exactly once.
-- Cooperative cancellation: workers stop early via send-or-cancel `select` when `ctx.Done()` fires; `process` receives `ctx` for in-flight cancellation.
-- Deterministic completion barrier: collector buffers all results and sorts by `File.Index` before returning.
+- Fan-out: one pre-buffered `jobs` channel distributes work across `N` worker goroutines.
+- Direct index writes: workers write to `collected[f.Index]` directly; no results channel, no closer goroutine, no sort needed. Safe because each file has a unique index and no two workers process the same file.
+- Coordinated shutdown: `wg.Wait()` in the caller blocks until all workers finish, then `collected` is returned.
+- Cooperative cancellation: `process` receives `ctx`; cancellation causes it to return quickly, so workers drain remaining jobs fast without blocking.
 
 ### Worker Pool vs Pipeline Pattern
 
-`gpx-merge` uses a **worker pool** (fan-out/fan-in), not a pipeline. The distinction matters when reasoning about concurrency design.
+`gpx-merge` uses a **worker pool** (fan-out), not a pipeline. The distinction matters when reasoning about concurrency design.
 
 | | Worker Pool | Pipeline |
 |---|---|---|
 | Stages | 1 | N chained |
 | Work units | Independent | Flow through stages |
 | Concurrency | N workers do the same thing | N stages overlap in time |
-| Result ordering | Lost — re-sorted by index | Preserved naturally |
-| Back-pressure | Via buffered channel capacity | Automatic between stages |
+| Result ordering | Preserved by index | Preserved naturally |
+| Back-pressure | N/A — pre-buffered jobs | Automatic between stages |
 
 **Worker pool** — all workers apply the same function to independent inputs:
 ```
-jobs ──► worker 1 ──►
-     ──► worker 2 ──► results
-     ──► worker 3 ──►
+jobs ──► worker 1 ──► collected[i]
+     ──► worker 2 ──► collected[j]
+     ──► worker 3 ──► collected[k]
 ```
 
 **Pipeline** — distinct stages connected by channels, each running concurrently:
@@ -82,51 +79,6 @@ parse ──ch1──► optimize ──ch2──► write
 Each GPX file is processed fully and independently: parse → sort segments → optimize → measure all happen sequentially inside one `processor.FileProcessor.Process` call. The stages are not independent bottlenecks that would benefit from overlapping across files. A pipeline would add channel coordination overhead with no throughput gain.
 
 A pipeline would be worth considering if parsing were significantly slower than optimization and you wanted stage 2 to begin on file N while stage 1 was still working on file N+1.
-
-### Shared Fan-In Channel vs Channel Slice
-
-#### Summary
-
-`gpx-merge` uses standard fan-out/fan-in with one shared results channel, not a per-worker channel slice. This keeps worker coordination and shutdown simpler while preserving deterministic output order.
-
-#### Context
-
-A question came up while reviewing `internal/pool/run.go`:
-
-- Why not use `[]chan Result` for fan-in, as seen in some Go examples?
-
-Current topology in the project:
-
-- One `jobs` channel for fan-out to N workers.
-- One shared `results` channel for fan-in from N workers.
-- One closer goroutine closes `results` after `wg.Wait()`.
-- Collector gathers all results and sorts by `File.Index` before return.
-
-#### Decision
-
-Use one shared fan-in channel for this worker pool.
-
-#### Rationale
-
-- Work is homogeneous across workers; no worker-specific output lanes are required.
-- Determinism is guaranteed by post-collection sort (`File.Index`), so per-worker channels are unnecessary for ordering.
-- Shutdown ownership is simple: one closer after worker completion, avoiding multi-channel close/merge complexity.
-- Operational complexity stays lower than slice-based fan-in designs (for example, multiplex loops or `reflect.Select`).
-
-#### When Channel Slices Make Sense
-
-Use `[]chan` when channels represent distinct lanes and behavior:
-
-1. Sharded or affinity queues where each worker owns state/cache/partition.
-2. Priority lanes (`high`, `normal`, `bulk`) with explicit service control.
-3. Per-source isolation so one noisy producer cannot starve others.
-4. Per-lane ordering guarantees with custom merge semantics.
-5. Independent lifecycle control for specific workers/lanes.
-
-#### Trade-Off Rule of Thumb
-
-- If workers are interchangeable and outputs are normalized later, prefer one shared fan-in channel.
-- If lanes have distinct policy, ownership, or ordering contracts, channel slices are often justified.
 
 
 ## Processing Sequence
@@ -143,8 +95,6 @@ sequenceDiagram
     participant SegSort as processor.sortTrackSegmentsByFirstTimestamp
     participant Opt as processor.optimizeTrack
     participant Measure as gpx.MeasureTracks
-    participant Main as collector
-    participant Close as closer goroutine
     participant Agg as processor.AggregateResults
     participant Write as gpx.WriteMerged or gpx.MeasureMerged
     participant Report as report.PrintSummary/PrintFailedFiles/PrintWarnings/WriteJSON
@@ -155,12 +105,12 @@ sequenceDiagram
     App->>App: build processor.NewFileProcessor(cfg, optOpts)
     App->>Pipe: Run(ctx, files, workers, fileProc.Process)
 
-    Note over Pipe,Close: Worker pool startup
-    Pipe->>Pipe: pre-buffer all files into jobs channel (synchronous, before goroutines start)
+    Note over Pipe,W1: Worker pool startup
+    Pipe->>Pipe: pre-buffer all files into jobs channel (synchronous)
+    Pipe->>Pipe: allocate collected []Result of len(files)
     Pipe->>W1: start workers
-    Pipe->>Close: start closer (wait for workers)
 
-    Note over W1,Main: Steady-state processing
+    Note over W1,Pipe: Steady-state processing
     loop each input file
         W1->>W1: dequeue File from pre-buffered jobs channel
         W1->>Proc: Process(ctx, file)
@@ -173,16 +123,15 @@ sequenceDiagram
         end
         Proc->>Measure: measure optimized bytes
         Proc-->>W1: filePayload | fileError
-        W1->>Main: results <- Result
+        W1->>W1: collected[file.Index] = Result
     end
 
     alt ctx canceled (SIGINT/SIGTERM/timeout)
-        Pipe-->>W1: process(ctx) returns early; send-or-cancel select exits worker
+        Pipe-->>W1: process(ctx) returns early; worker continues draining jobs
     end
 
-    Close->>Main: close(results) after wg.Wait()
-    Main->>Main: collect + sort by File.Index
-    Pipe-->>App: []Result (deterministic order)
+    Pipe->>Pipe: wg.Wait()
+    Pipe-->>App: []Result (deterministic order by index)
     App->>Agg: aggregate per-file stats/warnings/errors
     Agg-->>App: totals + tracks + file stats
     App->>Write: write merged GPX (or measure in dry-run)
@@ -201,22 +150,13 @@ flowchart TD
 
     subgraph PR["inside pool.Run"]
         B --> C["jobs channel pre-buffered to len(files) filled synchronously"]
-        B --> D["results channel buffered workers x2"]
+        B --> E["collected slice pre-allocated to len(files)"]
         B --> F["spawn worker goroutines 1..N"]
-        B --> G["spawn closer goroutine"]
-        B --> H["collector loop in caller goroutine"]
+        B --> H["wg.Wait() then return collected"]
 
         C --> F
-
-        F --> J["read job call process build Result"]
-        J --> K["send Result to results or exit on ctx done"]
-        K --> D
-
-        G --> L["wait for workers then close results"]
-        L --> D
-
-        H --> D
-        H --> M["sort collected results by File.Index and return"]
+        F --> J["read job → call process → collected[f.Index] = Result"]
+        J --> E
     end
 ```
 

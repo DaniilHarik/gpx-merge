@@ -12,7 +12,7 @@ Key files and responsibilities:
 - Post-pipeline aggregation is in `internal/processor/aggregate.go` (`processor.AggregateResults`).
 - `internal/pool/run.go` is the generic concurrency engine.
 
-The full data flow through `pool.Run` involves three roles. The `jobs` channel is pre-buffered to `len(files)` and filled synchronously before any goroutine starts — no feeder goroutine needed. The **N worker** goroutines each range over `jobs`, call `process(ctx, f)`, and send the result into the buffered `results` channel — or exit on cancellation. The **closer** goroutine calls `wg.Wait()` to block until all workers exit, then closes `results`. The **collector** (the main goroutine) ranges over `results` until it is closed, then sorts the collected slice by `File.Index` and returns it.
+The full data flow through `pool.Run` involves two roles. The `jobs` channel is pre-buffered to `len(files)` and filled synchronously before any goroutine starts. A pre-allocated `collected []Result` slice of length `len(files)` holds outputs. The **N worker** goroutines each range over `jobs`, call `process(ctx, f)`, and write the result directly to `collected[f.Index]`. The main goroutine calls `wg.Wait()` then returns `collected` — no results channel, no closer goroutine, no sort.
 
 ## 1. Prep (10 min)
 
@@ -31,10 +31,10 @@ Expected:
 
 Open `internal/pool/run.go` and `internal/app/app.go`, then identify:
 
-- Where jobs are pre-filled (lines 28–32 of `run.go`: synchronous buffer fill before workers start).
-- Where workers start (lines 37–53).
-- Where the results channel is closed (closer goroutine, lines 55–58).
-- Where results are consumed (collector loop, lines 60–63).
+- Where jobs are pre-filled (lines 27–31 of `run.go`: synchronous buffer fill before workers start).
+- Where `collected` is pre-allocated (line 33).
+- Where workers start (lines 35–46).
+- Where `wg.Wait()` blocks until all workers finish (line 48).
 - Where `Run(...)` wires in `fileProc.Process` (`app.go:67`).
 - Where `AggregateResults` is called (`app.go:68`).
 
@@ -44,11 +44,11 @@ Mini-task:
 
 Expected:
 
-- You can point to lines for jobs pre-fill, worker start, closer goroutine, collector loop, `fileProc.Process` wiring, `processor.AggregateResults(...)` call, and final sort.
+- You can point to lines for jobs pre-fill, `collected` pre-allocation, worker start, `wg.Wait()`, `fileProc.Process` wiring, and `processor.AggregateResults(...)` call.
 
 ## 3. Pattern: worker pool + fan-out/fan-in (20 min)
 
-Fan-out means the pre-buffered `jobs` channel distributes work across many consumers (the workers). Fan-in means those many workers all write into a single shared `results` channel, which is then drained by one collector. The `jobs` channel is pre-buffered to `len(files)` — all work is enqueued synchronously before any worker starts, so no producer goroutine is needed. The `results` channel is buffered at `workers*2` so that workers are not immediately blocked by a slow collector.
+Fan-out means the pre-buffered `jobs` channel distributes work across many consumers (the workers). There is no fan-in channel: workers write results directly to `collected[f.Index]`, a pre-allocated slice. This is safe because each file has a unique index and no two workers process the same file — no mutex needed. The main goroutine calls `wg.Wait()` and returns `collected` in deterministic order without any sort.
 
 Run:
 
@@ -64,51 +64,22 @@ Mini-task:
 
 Expected:
 
-- You mention final sort by `File.Index` in `internal/pool/run.go`. Workers finish in arbitrary order, so the collector receives results in arrival order. The sort at lines 65–67 unconditionally restores `File.Index` order regardless of how many workers ran.
+- You mention that workers write to `collected[f.Index]` directly, so `collected` is already in deterministic order when `wg.Wait()` returns — no sort needed. Workers finishing in arbitrary order doesn't affect output order.
 
-Follow-up: what would happen if `results` had a buffer size of 0? Trace the effect on the closer goroutine's `wg.Wait()`.
+Follow-up: why does removing the results channel also remove the need for a closer goroutine and the send-or-cancel `select`?
 
-## 4. Pattern: send-or-cancel (`select` with send) (30 min)
-
-After `process(ctx, f)` returns, the worker must either deliver the result or abort. It cannot do both, and it cannot block forever. The `select` at lines 45–49 of `run.go` expresses exactly this:
-
-```go
-select {
-case results <- res:   // delivered: continue to next job
-case <-ctx.Done():     // context canceled: drop result and exit
-    return
-}
-```
-
-Go picks whichever case is ready first. If both are ready simultaneously, Go picks one at random. This is not a check for "is the channel open" — that is a receive pattern (`v, ok := <-ch`). This is a non-blocking send with a cancellation escape hatch.
-
-Mini-task:
-
-- Temporarily add debug logs before and inside both `select` branches.
-- Trigger cancellation by canceling a parent context (for example, run via `app.Run` with `context.WithCancel` and call `cancel()` during processing).
-
-Expected:
-
-- You see some workers publish results.
-- After cancellation, some workers take the `<-ctx.Done()` branch and exit quickly.
-- No deadlock.
-
-Key question: why does this `select` not check whether `results` is closed? Because senders never close a channel — only the closer goroutine closes `results`, and it does so only after all workers have exited. At the moment a worker executes this `select`, the channel is guaranteed to still be open.
-
-## 5. Pattern: context cancellation propagation (20 min)
+## 4. Pattern: context cancellation propagation (20 min)
 
 Cancellation propagates from parent to children through the shared `ctx` value. No explicit signal passing is needed — every goroutine that holds `ctx` can observe cancellation independently.
 
-The four-step path:
+The three-step path:
 
 1. The parent context is canceled — by `signal.NotifyContext` on SIGINT/SIGTERM (`app.go:26`), a timeout, or an explicit `cancel()` call.
-2. The `jobs` channel was already closed at startup (pre-buffered fill). Workers currently calling `process(ctx, f)` have their call return quickly because they hold the cancelled `ctx`.
-3. Workers take the `ctx.Done()` branch of the send-or-cancel `select` and return without delivering results. Remaining items in `jobs` go unprocessed as workers exit.
-4. Once all workers exit, `wg.Wait()` unblocks in the closer goroutine, which closes `results`. The collector's `for res := range results` loop exits, and `Run` returns whatever was collected before cancellation.
+2. Workers currently calling `process(ctx, f)` have their call return quickly (with a context error) because they hold the cancelled `ctx`. Workers then write the error result to `collected[f.Index]` and loop back to dequeue the next job, where `process` returns quickly again.
+3. Once the `jobs` channel is drained, all workers return and `wg.Wait()` unblocks. `Run` returns `collected` with partial results — processed files have their real result, cancelled files have a context-error result.
 
 Focus:
 
-- Worker send-or-cancel select in `internal/pool/run.go`.
 - App root signal context in `internal/app/app.go` (`signal.NotifyContext`).
 
 Extra mini-task:
@@ -117,28 +88,28 @@ Extra mini-task:
 
 ## 6. Pattern: graceful shutdown ownership (20 min)
 
-`results` has exactly one owner for closing: the closer goroutine at lines 60–63 of `run.go`. This is the "single closer" rule. If any worker tried to close `results`, it would race with other workers that are still sending — causing a `send on closed channel` panic. Instead:
+There is no results channel to close. Shutdown is simple:
 
-- Workers are senders only. They never close `results`.
-- The closer goroutine waits for all workers to finish (`wg.Wait()`), then closes `results`. At that point no senders remain, so closing is safe.
-- The collector ranges over `results` and exits when it is closed.
+- Workers range over `jobs` until it is exhausted (it was closed before workers started).
+- Each worker calls `wg.Done()` via `defer wg.Done()` when its loop exits.
+- The main goroutine calls `wg.Wait()`, which unblocks when all workers have called `wg.Done()`.
+- `collected` is returned directly — no channel close, no closer goroutine, no collector loop.
 
 Focus:
 
-- `wg.Wait()` then `close(results)` at lines 55–58 in `internal/pool/run.go`.
+- `wg.Wait()` at line 48 in `internal/pool/run.go`.
 
 Mini-task:
 
-- Explain why only the closer goroutine should close `results`.
+- Explain why there is no risk of writing to a closed channel or reading from a closed channel in this design.
 
 Expected:
 
-- "Single closer" prevents `send on closed channel` panic.
-- Senders never close; they only send or exit.
+- Workers only write to a slice, never to a channel. No channel is open during worker execution that could be closed prematurely.
 
 ## 7. Determinism guarantee: output order after concurrency (15 min)
 
-Workers finish in nondeterministic order depending on OS scheduling, file size, and parse time. The collector receives results in arrival order. The `sort.Slice` at lines 65–67 of `run.go` then sorts by `File.Index`, which was assigned sequentially from the input file list before any concurrency started. This guarantees that `Run` always returns results in the same order as the input `files` slice, regardless of how many workers ran or how long each took.
+Workers finish in nondeterministic order depending on OS scheduling, file size, and parse time. Output order is still deterministic because each worker writes to `collected[f.Index]`, and `f.Index` was assigned sequentially from the input file list before any concurrency started. `collected` is always in the same order as the input `files` slice, regardless of worker scheduling — no sort needed.
 
 Run:
 
@@ -180,15 +151,14 @@ Expected:
 
 ## Checkpoint questions (self-test)
 
-1. Why is `select` with send not an "is channel open" check?
+1. Why is writing to `collected[f.Index]` from multiple goroutines safe without a mutex?
 2. Why can `cancel()` be called multiple times safely?
-3. Why does sorting happen after collection, not during worker processing?
-4. Who owns closing `results`, and why?
-5. What is the buffer size of `results` and what problem does it solve?
-6. What happens to in-flight results when the context is canceled — are they delivered or dropped?
+3. Why is the output of `Run` already in deterministic order without a sort?
+4. What happens to files that are still in `jobs` when the context is canceled?
+5. Why is there no risk of a `send on closed channel` panic in this design?
+6. What would need to change if two files could share the same index?
 
 ## Optional follow-up exercises
 
 - Add `context.WithTimeout` support around `pool.Run`. Add tests for timeout-driven cancellation and partial result behavior.
 - Fix the data race in `internal/pool/order_test.go` and confirm `go test -race ./...` passes clean.
-- Change the `results` buffer size to 0 (unbuffered) and explain what deadlock you observe and why.
