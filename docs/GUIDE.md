@@ -1,7 +1,7 @@
 # Hands-On Worksheet: Go Concurrency Patterns (`gpx-merge`)
 
 Time: ~2.5 hours total
-Goal: learn worker pool, fan-out/fan-in, send-or-cancel, context-driven cancellation, graceful shutdown, and deterministic output guarantees.
+Goal: learn worker pool, fan-out, direct index writes, context-driven cancellation, graceful shutdown, and deterministic output guarantees.
 
 ## 0. Code layout (5 min)
 
@@ -46,9 +46,9 @@ Expected:
 
 - You can point to lines for jobs pre-fill, `collected` pre-allocation, worker start, `wg.Wait()`, `fileProc.Process` wiring, and `processor.AggregateResults(...)` call.
 
-## 3. Pattern: worker pool + fan-out/fan-in (20 min)
+## 3. Pattern: worker pool + fan-out + direct index writes (20 min)
 
-Fan-out means the pre-buffered `jobs` channel distributes work across many consumers (the workers). There is no fan-in channel: workers write results directly to `collected[f.Index]`, a pre-allocated slice. This is safe because each file has a unique index and no two workers process the same file — no mutex needed. The main goroutine calls `wg.Wait()` and returns `collected` in deterministic order without any sort.
+Fan-out means the pre-buffered `jobs` channel distributes work across many consumers (the workers). There is no fan-in: workers write results directly to `collected[f.Index]`, a pre-allocated slice, eliminating the results channel, closer goroutine, and send-or-cancel `select` entirely. This is safe because each file has a unique index and no two workers process the same file — no mutex needed. The main goroutine calls `wg.Wait()` and returns `collected` in deterministic order without any sort.
 
 Run:
 
@@ -66,7 +66,7 @@ Expected:
 
 - You mention that workers write to `collected[f.Index]` directly, so `collected` is already in deterministic order when `wg.Wait()` returns — no sort needed. Workers finishing in arbitrary order doesn't affect output order.
 
-Follow-up: why does removing the results channel also remove the need for a closer goroutine and the send-or-cancel `select`?
+Follow-up: a classic fan-in design uses a results channel, a closer goroutine, and a send-or-cancel `select`. Explain why this design needs none of those three things.
 
 ## 4. Pattern: context cancellation propagation (20 min)
 
@@ -86,7 +86,7 @@ Extra mini-task:
 
 - Trace the error path end-to-end: `processor.FileProcessor.Process(...)` returns an error → worker wraps it in `Result{Err: err}` and sends it → `AggregateResults` detects `r.Err != nil` and appends to `errorsOut`, skipping the file's tracks → `report.PrintFailedFiles` reports it at the end. Other files continue processing unaffected.
 
-## 6. Pattern: graceful shutdown ownership (20 min)
+## 5. Pattern: graceful shutdown ownership (20 min)
 
 There is no results channel to close. Shutdown is simple:
 
@@ -119,7 +119,7 @@ go test ./... -run TestRunDeterministicOrder
 
 Focus file: `internal/pool/order_test.go`
 
-Note: `order_test.go` shares a single `*rand.Rand` across 4 concurrently-running goroutines (lines 19–23). `math/rand.Rand` is not goroutine-safe. Run `go test -race ./...` to see the data race. Fix: give each worker closure its own `rand.New(rand.NewSource(...))`.
+Note: the process closure uses `rand.New(rand.NewSource(int64(42 + f.Index)))` — each worker gets its own `*rand.Rand`. This avoids a data race: `math/rand.Rand` is not goroutine-safe, so sharing one instance across concurrent workers would be flagged by `go test -race ./...`.
 
 Mini-task:
 
@@ -127,7 +127,7 @@ Mini-task:
 
 Expected:
 
-- You mention that collection order is nondeterministic, but final `sort.Slice` restores index order.
+- You mention that workers write to `collected[f.Index]` directly, so `collected` is already in deterministic order when `wg.Wait()` returns — no sort needed. Workers finishing in arbitrary order doesn't affect the final slice order.
 
 Extra mini-task:
 
@@ -161,4 +161,3 @@ Expected:
 ## Optional follow-up exercises
 
 - Add `context.WithTimeout` support around `pool.Run`. Add tests for timeout-driven cancellation and partial result behavior.
-- Fix the data race in `internal/pool/order_test.go` and confirm `go test -race ./...` passes clean.

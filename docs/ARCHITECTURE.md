@@ -35,8 +35,8 @@ The runtime now follows a **Functional Core, Imperative Shell** split:
 Concurrency improves throughput, but output order remains stable:
 
 - Files are assigned deterministic indices during discovery.
-- Workers process files in parallel.
-- Results are sorted by file index before aggregation/output.
+- Workers process files in parallel, each writing to `collected[f.Index]`.
+- `collected` is already in deterministic order when `wg.Wait()` returns — no sort needed.
 
 This guarantees reproducible merged ordering regardless of worker scheduling.
 
@@ -83,81 +83,53 @@ A pipeline would be worth considering if parsing were significantly slower than 
 
 ## Processing Sequence
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor CLI
-    participant App as app.Run (shell)
-    participant Pipe as pool.Run
-    participant W1 as worker (1..N)
-    participant Proc as processor.FileProcessor.Process
-    participant Parse as gpx.ParseFile
-    participant SegSort as processor.sortTrackSegmentsByFirstTimestamp
-    participant Opt as processor.optimizeTrack
-    participant Measure as gpx.MeasureTracks
-    participant Agg as processor.AggregateResults
-    participant Write as gpx.WriteMerged or gpx.MeasureMerged
-    participant Report as report.PrintSummary/PrintFailedFiles/PrintWarnings/WriteJSON
-    participant Metrics as report.AppendMetricsCSV
+```
+Setup
+  CLI ──► app.Run: os.Args, stdout, stderr
+  app.Run: parse config, discover files, build processor.NewFileProcessor(cfg, optOpts)
+  app.Run ──► pool.Run: Run(ctx, files, workers, fileProc.Process)
 
-    Note over CLI,Pipe: Setup
-    CLI->>App: parse config + discover files
-    App->>App: build processor.NewFileProcessor(cfg, optOpts)
-    App->>Pipe: Run(ctx, files, workers, fileProc.Process)
+Worker pool startup (inside pool.Run)
+  pool.Run: pre-buffer all files into jobs channel (synchronous, len(files) capacity)
+  pool.Run: allocate collected []Result (len(files))
+  pool.Run: spawn worker goroutines 1..N
 
-    Note over Pipe,W1: Worker pool startup
-    Pipe->>Pipe: pre-buffer all files into jobs channel (synchronous)
-    Pipe->>Pipe: allocate collected []Result of len(files)
-    Pipe->>W1: start workers
+Steady-state (each worker, repeated until jobs drained)
+  worker: dequeue File from jobs channel
+  worker ──► Process(ctx, file)
+    Process ──► gpx.ParseFile
+    Process ──► sortTrackSegmentsByFirstTimestamp  [only with --sort-segments-by-time]
+    Process ──► optimizeTrack (per track): simplify + distance in/out
+    Process ──► gpx.MeasureTracks
+  Process ──► worker: filePayload | fileError
+  worker: collected[file.Index] = Result
 
-    Note over W1,Pipe: Steady-state processing
-    loop each input file
-        W1->>W1: dequeue File from pre-buffered jobs channel
-        W1->>Proc: Process(ctx, file)
-        Proc->>Parse: parse tracks
-        alt --sort-segments-by-time
-            Proc->>SegSort: reorder segments by first timestamp
-        end
-        loop each track
-            Proc->>Opt: simplify + distance in/out
-        end
-        Proc->>Measure: measure optimized bytes
-        Proc-->>W1: filePayload | fileError
-        W1->>W1: collected[file.Index] = Result
-    end
+On ctx cancel (SIGINT / SIGTERM / timeout)
+  process(ctx, f) returns early with a context error
+  worker writes error Result to collected[f.Index] and drains remaining jobs fast
 
-    alt ctx canceled (SIGINT/SIGTERM/timeout)
-        Pipe-->>W1: process(ctx) returns early; worker continues draining jobs
-    end
+Shutdown
+  pool.Run: wg.Wait() — blocks until all workers call wg.Done()
+  pool.Run ──► app.Run: []Result (deterministic order, no sort)
 
-    Pipe->>Pipe: wg.Wait()
-    Pipe-->>App: []Result (deterministic order by index)
-    App->>Agg: aggregate per-file stats/warnings/errors
-    Agg-->>App: totals + tracks + file stats
-    App->>Write: write merged GPX (or measure in dry-run)
-    App->>Report: print summary/errors/warnings (+ optional JSON)
-    opt --metrics-csv set
-        App->>Metrics: append row (started_at_utc, points_in, points_out, workers, duration_ms, mb_in, mb_out)
-    end
-    App-->>CLI: merged output + report
+Post-processing
+  app.Run ──► AggregateResults: aggregate stats / warnings / errors
+  app.Run ──► WriteMerged (or MeasureMerged in --dry-run)
+  app.Run ──► PrintSummary / PrintFailedFiles / PrintWarnings (+ optional JSON)
+  app.Run ──► AppendMetricsCSV  [only with --metrics-csv]
+  app.Run ──► CLI: exit 0 | 1 | 2
 ```
 
 ## Goroutine Hierarchy
 
-```mermaid
-flowchart TD
-    A["app.Run caller goroutine"] --> B["pool.Run caller goroutine"]
-
-    subgraph PR["inside pool.Run"]
-        B --> C["jobs channel pre-buffered to len(files) filled synchronously"]
-        B --> E["collected slice pre-allocated to len(files)"]
-        B --> F["spawn worker goroutines 1..N"]
-        B --> H["wg.Wait() then return collected"]
-
-        C --> F
-        F --> J["read job → call process → collected[f.Index] = Result"]
-        J --> E
-    end
+```
+app.Run (caller goroutine)
+└── pool.Run (caller goroutine)
+    ├── pre-buffer jobs channel (synchronous, len(files) capacity)
+    ├── allocate collected []Result (len(files))
+    ├── spawn worker goroutines 1..N
+    │   └── read job ──► process(ctx, f) ──► collected[f.Index] = Result
+    └── wg.Wait() → return collected
 ```
 
 ## Input Validation

@@ -79,9 +79,9 @@ The CSV is append-only and includes `started_at_utc,points_in,points_out,workers
 ## Documentation
 
 - CLI flags, defaults, exit codes, and output details: [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md)
-- Pipeline and processing internals (with sequence diagram): [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Pipeline and processing internals: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Design goals and behavior spec: [`SPEC.md`](SPEC.md)
-- Concurrency notes: [`docs/CONCURRENCY_WORKSHEET.md`](docs/CONCURRENCY_WORKSHEET.md)
+- Concurrency guide: [`docs/GUIDE.md`](docs/GUIDE.md)
 
 ## Performance
 
@@ -89,15 +89,15 @@ Benchmarked on the dataset (70 files, 178 MB, 959 100 points) using 16 workers o
 
 | Metric | Value |
 |---|---|
-| Wall time | ~1.29 s |
-| Points/s | ~743 000 pts/s |
+| Wall time | ~1.13 s |
+| Points/s | ~850 000 pts/s |
 | Files | 70 files → 1 merged output |
 | Points in → out | 959 100 → 247 507 (74% reduction) |
 | Size in → out | 178 MB → 11.6 MB (94% reduction) |
 
 ```
 ./gpx-merge --input ./data --dry-run
-# Elapsed: 1.29s  Throughput: ~54 files/s, ~743000 points/s
+# Elapsed: 1.13s  Throughput: ~62 files/s, ~850000 points/s
 ```
 
 ## Development
