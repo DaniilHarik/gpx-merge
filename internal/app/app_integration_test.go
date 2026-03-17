@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func TestRunMixedValidInvalidFiles(t *testing.T) {
+func TestRunFailsOnInvalidFile(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "valid1.gpx"), []byte(testGPX("Track One", 30)), 0o644); err != nil {
@@ -27,37 +27,24 @@ func TestRunMixedValidInvalidFiles(t *testing.T) {
 	}
 
 	outPath := filepath.Join(root, "out", "merged.gpx")
-	jsonPath := filepath.Join(root, "report", "run.json")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run(context.Background(), []string{
 		"--input", root,
 		"--output", outPath,
 		"--workers", "4",
-		"--json-report", jsonPath,
 	}, &stdout, &stderr)
 
 	if code != 1 {
-		t.Fatalf("Run() code = %d, want 1\nstderr=%s", code, stderr.String())
+		t.Fatalf("Run() code = %d, want 1\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
 	}
-	if _, err := os.Stat(outPath); err != nil {
-		t.Fatalf("expected output file: %v", err)
+	// No output should be written when processing fails.
+	if _, err := os.Stat(outPath); err == nil {
+		t.Fatal("output file should not exist when processing fails")
 	}
-	if _, err := os.Stat(jsonPath); err != nil {
-		t.Fatalf("expected json report: %v", err)
-	}
-	outBytes, err := os.ReadFile(outPath)
-	if err != nil {
-		t.Fatalf("read output: %v", err)
-	}
-	if got := strings.Count(string(outBytes), "<trk>"); got != 2 {
-		t.Fatalf("track count = %d, want 2", got)
-	}
-	if !strings.Contains(stdout.String(), "Files failed: 1") {
-		t.Fatalf("summary missing failed count: %s", stdout.String())
-	}
-	if !strings.Contains(stdout.String(), "Failed files:\n- invalid.gpx (parse):") {
-		t.Fatalf("summary missing failed file names: %s", stdout.String())
+	// Error must surface to stderr.
+	if !strings.Contains(stderr.String(), "process files:") {
+		t.Fatalf("stderr missing error: %s", stderr.String())
 	}
 }
 

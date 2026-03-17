@@ -30,7 +30,7 @@ gpx-merge [flags]
 ## Behavior Notes
 
 - Discovery is recursive and case-insensitive for `.gpx` extension.
-- File-level failures are reported; successful files are still merged.
+- Any file-level failure aborts the run immediately; no output is written.
 - Output ordering is deterministic, even with concurrent workers.
 - If `--sort-segments-by-time` is enabled and a track has non-parseable timestamps, that track remains in original order.
 - Internal package split: orchestration is in `internal/app`, while per-file processing/aggregation are in `internal/processor`.
@@ -39,7 +39,7 @@ gpx-merge [flags]
 ## Exit Codes
 
 - `0`: all files succeeded
-- `1`: one or more files failed
+- `1`: any file failed during processing (run aborted, no output written)
 - `2`: configuration/usage/runtime setup error
 
 ## Human Report Format
@@ -50,7 +50,6 @@ The summary includes:
 - Worker count
 - Points, size, and distance before/after optimization
 - Elapsed time and throughput
-- Failed file list (if any)
 - Discontinuity warnings (if any)
 - Optional appended CSV row with points in/out, workers, duration, and MB in/out
 

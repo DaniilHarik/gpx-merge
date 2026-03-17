@@ -64,12 +64,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	fileProc := processor.NewFileProcessor(cfg, optOpts)
-	results := pool.Run(ctx, files, cfg.Workers, fileProc.Process)
+	results, err := pool.Run(ctx, files, cfg.Workers, fileProc.Process)
+	if err != nil {
+		fmt.Fprintf(stderr, "process files: %v\n", err)
+		return 1
+	}
 	agg := processor.AggregateResults(results, len(found), cfg.Verbose, stdout)
 	totals := agg.Totals
 	allTracks := agg.AllTracks
 	fileStats := agg.FileStats
-	errorsOut := agg.ErrorsOut
 	warningsOut := agg.WarningsOut
 
 	writeOpts := gpx.WriteOptions{
@@ -100,17 +103,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	totals.DistanceReduction = report.ReductionPctFloat(totals.DistanceInM, totals.DistanceOutM)
 
 	report.PrintSummary(stdout, totals, elapsed, cfg.Workers)
-	report.PrintFailedFiles(stdout, errorsOut)
 	report.PrintWarnings(stdout, warningsOut)
 
-	if err := writeReports(cfg, start, elapsed, totals, fileStats, errorsOut, warningsOut); err != nil {
+	if err := writeReports(cfg, start, elapsed, totals, fileStats, warningsOut); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
 
-	if totals.FilesFailed > 0 {
-		return 1
-	}
 	return 0
 }
 
@@ -162,17 +161,16 @@ func configSnapshot(cfg cli.Config) report.ConfigSnapshot {
 	}
 }
 
-func writeReports(cfg cli.Config, start time.Time, elapsed time.Duration, totals report.Totals, fileStats []report.FileStat, errorsOut []report.ErrorItem, warningsOut []report.WarningItem) error {
+func writeReports(cfg cli.Config, start time.Time, elapsed time.Duration, totals report.Totals, fileStats []report.FileStat, warningsOut []report.WarningItem) error {
 	if cfg.JSONReport != "" {
 		jr := report.JSONReport{
 			StartedAt:  start.UTC().Format(time.RFC3339),
 			FinishedAt: time.Now().UTC().Format(time.RFC3339),
 			DurationMs: elapsed.Milliseconds(),
-			Config: configSnapshot(cfg),
-			Totals:   totals,
-			Files:    fileStats,
-			Errors:   errorsOut,
-			Warnings: warningsOut,
+			Config:     configSnapshot(cfg),
+			Totals:     totals,
+			Files:      fileStats,
+			Warnings:   warningsOut,
 		}
 		if err := report.WriteJSON(cfg.JSONReport, jr); err != nil {
 			return fmt.Errorf("write --json-report: %w", err)

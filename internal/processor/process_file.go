@@ -42,7 +42,7 @@ func NewFileProcessor(cfg cli.Config, optOpts optimize.Options) FileProcessor {
 }
 
 func (e *fileError) Error() string {
-	return fmt.Sprintf("%s: %v", e.Stage, e.Err)
+	return fmt.Sprintf("%s: %s: %v", e.Path, e.Stage, e.Err)
 }
 
 func (e *fileError) Unwrap() error {

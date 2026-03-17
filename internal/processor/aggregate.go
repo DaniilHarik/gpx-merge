@@ -1,7 +1,6 @@
 package processor
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -15,7 +14,6 @@ type RunAggregation struct {
 	Totals      report.Totals
 	AllTracks   []gpx.Track
 	FileStats   []report.FileStat
-	ErrorsOut   []report.ErrorItem
 	WarningsOut []report.WarningItem
 }
 
@@ -23,7 +21,6 @@ func AggregateResults(results []pool.Result, filesScanned int, verbose bool, std
 	totals := report.Totals{FilesScanned: filesScanned}
 	allTracks := make([]gpx.Track, 0)
 	fileStats := make([]report.FileStat, 0, len(results))
-	errorsOut := make([]report.ErrorItem, 0)
 	warningsOut := make([]report.WarningItem, 0)
 
 	for _, res := range results {
@@ -32,22 +29,6 @@ func AggregateResults(results []pool.Result, filesScanned int, verbose bool, std
 			Path:       res.File.RelPath,
 			DurationMs: res.Duration.Milliseconds(),
 		}
-		if res.Err != nil {
-			stage := "process"
-			if ferr := new(fileError); errors.As(res.Err, &ferr) {
-				stage = ferr.Stage
-			}
-			stat.Status = "error"
-			stat.Stage = stage
-			stat.Error = res.Err.Error()
-			totals.FilesFailed++
-			errorsOut = append(errorsOut, report.ErrorItem{Path: res.File.RelPath, Stage: stage, Message: res.Err.Error()})
-			fileStats = append(fileStats, stat)
-			if verbose {
-				fmt.Fprintf(stdout, "[error] %s stage=%s err=%v\n", res.File.RelPath, stage, res.Err)
-			}
-			continue
-		}
 
 		payload, ok := res.Payload.(filePayload)
 		if !ok {
@@ -55,7 +36,6 @@ func AggregateResults(results []pool.Result, filesScanned int, verbose bool, std
 			stat.Stage = "internal"
 			stat.Error = "internal payload type mismatch"
 			totals.FilesFailed++
-			errorsOut = append(errorsOut, report.ErrorItem{Path: res.File.RelPath, Stage: "internal", Message: stat.Error})
 			fileStats = append(fileStats, stat)
 			continue
 		}
@@ -96,7 +76,6 @@ func AggregateResults(results []pool.Result, filesScanned int, verbose bool, std
 		Totals:      totals,
 		AllTracks:   allTracks,
 		FileStats:   fileStats,
-		ErrorsOut:   errorsOut,
 		WarningsOut: warningsOut,
 	}
 }

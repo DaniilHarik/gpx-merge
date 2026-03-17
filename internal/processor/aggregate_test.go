@@ -2,7 +2,6 @@ package processor
 
 import (
 	"bytes"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -16,14 +15,6 @@ func makeSuccessResult(index int, relPath string, payload filePayload) pool.Resu
 	return pool.Result{
 		File:     pool.File{Index: index, RelPath: relPath},
 		Payload:  payload,
-		Duration: time.Millisecond,
-	}
-}
-
-func makeErrorResult(index int, relPath string, err error) pool.Result {
-	return pool.Result{
-		File:     pool.File{Index: index, RelPath: relPath},
-		Err:      err,
 		Duration: time.Millisecond,
 	}
 }
@@ -77,9 +68,6 @@ func TestAggregateResults_AllSuccess(t *testing.T) {
 	if len(agg.AllTracks) != 2 {
 		t.Fatalf("len(AllTracks) = %d, want 2", len(agg.AllTracks))
 	}
-	if len(agg.ErrorsOut) != 0 {
-		t.Fatalf("len(ErrorsOut) = %d, want 0", len(agg.ErrorsOut))
-	}
 	if len(agg.FileStats) != 2 {
 		t.Fatalf("len(FileStats) = %d, want 2", len(agg.FileStats))
 	}
@@ -87,67 +75,6 @@ func TestAggregateResults_AllSuccess(t *testing.T) {
 		if s.Status != "ok" {
 			t.Fatalf("FileStats[%s].Status = %q, want ok", s.Path, s.Status)
 		}
-	}
-}
-
-func TestAggregateResults_AllErrors(t *testing.T) {
-	t.Parallel()
-	results := []pool.Result{
-		makeErrorResult(0, "a.gpx", &fileError{Stage: "parse", Err: errors.New("unexpected EOF")}),
-		makeErrorResult(1, "b.gpx", &fileError{Stage: "stat", Err: errors.New("no such file")}),
-	}
-
-	agg := AggregateResults(results, 2, false, &bytes.Buffer{})
-
-	if agg.Totals.FilesFailed != 2 {
-		t.Fatalf("FilesFailed = %d, want 2", agg.Totals.FilesFailed)
-	}
-	if agg.Totals.FilesProcessed != 0 {
-		t.Fatalf("FilesProcessed = %d, want 0", agg.Totals.FilesProcessed)
-	}
-	if len(agg.AllTracks) != 0 {
-		t.Fatalf("len(AllTracks) = %d, want 0", len(agg.AllTracks))
-	}
-	if len(agg.ErrorsOut) != 2 {
-		t.Fatalf("len(ErrorsOut) = %d, want 2", len(agg.ErrorsOut))
-	}
-	if agg.ErrorsOut[0].Stage != "parse" {
-		t.Fatalf("ErrorsOut[0].Stage = %q, want parse", agg.ErrorsOut[0].Stage)
-	}
-	if agg.ErrorsOut[1].Stage != "stat" {
-		t.Fatalf("ErrorsOut[1].Stage = %q, want stat", agg.ErrorsOut[1].Stage)
-	}
-	for _, s := range agg.FileStats {
-		if s.Status != "error" {
-			t.Fatalf("FileStats[%s].Status = %q, want error", s.Path, s.Status)
-		}
-	}
-}
-
-func TestAggregateResults_Mixed(t *testing.T) {
-	t.Parallel()
-	results := []pool.Result{
-		makeSuccessResult(0, "good.gpx", filePayload{
-			Tracks:   []gpx.Track{{Name: "Good"}},
-			PointsIn: 10,
-			PointsOut: 5,
-		}),
-		makeErrorResult(1, "bad.gpx", &fileError{Stage: "parse", Err: errors.New("bad xml")}),
-	}
-
-	agg := AggregateResults(results, 2, false, &bytes.Buffer{})
-
-	if agg.Totals.FilesProcessed != 1 {
-		t.Fatalf("FilesProcessed = %d, want 1", agg.Totals.FilesProcessed)
-	}
-	if agg.Totals.FilesFailed != 1 {
-		t.Fatalf("FilesFailed = %d, want 1", agg.Totals.FilesFailed)
-	}
-	if len(agg.AllTracks) != 1 {
-		t.Fatalf("len(AllTracks) = %d, want 1", len(agg.AllTracks))
-	}
-	if len(agg.ErrorsOut) != 1 {
-		t.Fatalf("len(ErrorsOut) = %d, want 1", len(agg.ErrorsOut))
 	}
 }
 
@@ -165,24 +92,8 @@ func TestAggregateResults_WrongPayloadType(t *testing.T) {
 	if agg.Totals.FilesFailed != 1 {
 		t.Fatalf("FilesFailed = %d, want 1", agg.Totals.FilesFailed)
 	}
-	if len(agg.ErrorsOut) != 1 {
-		t.Fatalf("len(ErrorsOut) = %d, want 1", len(agg.ErrorsOut))
-	}
-	if agg.ErrorsOut[0].Stage != "internal" {
-		t.Fatalf("ErrorsOut[0].Stage = %q, want internal", agg.ErrorsOut[0].Stage)
-	}
-}
-
-func TestAggregateResults_NonFileErrorUsesProcessStage(t *testing.T) {
-	t.Parallel()
-	results := []pool.Result{
-		makeErrorResult(0, "a.gpx", errors.New("generic error")),
-	}
-
-	agg := AggregateResults(results, 1, false, &bytes.Buffer{})
-
-	if agg.ErrorsOut[0].Stage != "process" {
-		t.Fatalf("Stage = %q, want process", agg.ErrorsOut[0].Stage)
+	if len(agg.FileStats) != 1 || agg.FileStats[0].Stage != "internal" {
+		t.Fatalf("expected internal error stat")
 	}
 }
 
@@ -194,18 +105,14 @@ func TestAggregateResults_VerboseWritesToStdout(t *testing.T) {
 			PointsIn:  10,
 			PointsOut: 5,
 		}),
-		makeErrorResult(1, "e.gpx", &fileError{Stage: "parse", Err: errors.New("bad")}),
 	}
 
 	var buf bytes.Buffer
-	AggregateResults(results, 2, true, &buf)
+	AggregateResults(results, 1, true, &buf)
 
 	out := buf.String()
 	if !strings.Contains(out, "[ok] v.gpx") {
 		t.Fatalf("verbose output missing [ok] line: %s", out)
-	}
-	if !strings.Contains(out, "[error] e.gpx") {
-		t.Fatalf("verbose output missing [error] line: %s", out)
 	}
 }
 

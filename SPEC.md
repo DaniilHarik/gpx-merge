@@ -82,7 +82,7 @@ gpx-merge \
 ## 7. Functional Requirements
 
 1. Discover all `*.gpx` files under `--input` recursively.
-2. Parse GPX 1.1 input safely; skip malformed files with structured error reporting.
+2. Parse GPX 1.1 input safely; abort the run on any file error with a structured error message.
 3. For each input track:
    - Preserve logical track identity (`<name>` when present, or filename fallback).
    - Preserve segment names/labels when present.
@@ -123,21 +123,19 @@ Quality guardrails:
 
 ## 9. Concurrency Design
 
-Pipeline architecture:
+Phases:
 
 1. Discover phase:
    - Walks input tree, builds deterministic file list.
 2. Worker pool (`--workers`):
-   - Parse + optimize files in parallel.
-3. Collector phase:
-   - Collects all results, reorders by source index.
-4. Aggregation + write phase:
+   - Parse + optimize files in parallel via `errgroup`; results written directly to a pre-allocated slice at each file's index.
+3. Aggregation + write phase:
    - Aggregates totals/tracks, then writes merged output sequentially.
 
 Design constraints:
 
 1. Output must be deterministic regardless of worker scheduling.
-2. The `jobs` channel is pre-buffered to `len(files)` and filled synchronously before workers start. Workers write results directly to a pre-allocated `collected` slice at their file's index; no results channel. Full run results/tracks are available immediately after `wg.Wait()` returns.
+2. `errgroup.WithContext` manages the worker pool: `g.SetLimit(workers)` bounds parallelism, workers write results directly to a pre-allocated `collected` slice at their file's index, and `g.Wait()` blocks until all goroutines finish. The first error cancels the shared context and is returned by `g.Wait()`.
 3. No writer-stage backpressure during worker processing because writing starts after result collection.
 4. Context cancellation support on fatal error or SIGINT.
 5. No intermediate on-disk conversion artifacts; only final output is written.
@@ -167,12 +165,12 @@ Targets on a modern laptop (baseline expectations):
 
 ## 12. Error Handling
 
-1. Per-file errors do not stop the whole run by default.
+1. Any per-file error aborts the run immediately (all-or-nothing): no partial output is written.
 2. Final exit code:
    - `0` if all files processed successfully.
-   - `1` if one or more files failed.
+   - `1` if any file failed during processing.
    - `2` for configuration/usage errors and runtime setup/output/reporting errors.
-3. Per-file processing errors are recorded and reported; processing continues for remaining files.
+3. The failing file path and stage are included in the error message written to stderr.
 
 ## 13. Observability
 
@@ -186,8 +184,6 @@ Targets on a modern laptop (baseline expectations):
 4. Human summary output shape:
    - `Files scanned`, `Files processed`, `Files failed`, `Workers`.
    - `Points`, `Bytes`, `Distance`, `Elapsed`, `Throughput`.
-   - If failures occur, list each failed file with reason:
-     - Example: `- file.gpx (optimize): segment has 1 points; expected at least 2`
    - If warnings occur, print a `Warnings:` section:
      - Segment discontinuity warnings for adjacent `<trkseg>` gaps over `1000m` (including split-threshold outcome).
      - Segment reorder warnings when `--sort-segments-by-time` changes one or more tracks.
@@ -199,7 +195,7 @@ Targets on a modern laptop (baseline expectations):
    - Precision rounding behavior.
    - Deterministic ordering with concurrent workers.
 2. Integration tests:
-   - Mixed valid/invalid files.
+   - Run aborts on an invalid file; no partial output written.
    - Large synthetic dataset under `data/`.
 3. Golden tests:
    - Stable XML output shape and compatibility checks.

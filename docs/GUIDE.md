@@ -1,7 +1,7 @@
 # Hands-On Worksheet: Go Concurrency Patterns (`gpx-merge`)
 
 Time: ~2.5 hours total
-Goal: learn worker pool, fan-out, direct index writes, context-driven cancellation, graceful shutdown, and deterministic output guarantees.
+Goal: understand how a bounded worker pool built on `errgroup` provides concurrency, fail-fast error handling, cancellation, and deterministic output in a single primitive.
 
 ## 0. Code layout (5 min)
 
@@ -12,7 +12,7 @@ Key files and responsibilities:
 - Post-pipeline aggregation is in `internal/processor/aggregate.go` (`processor.AggregateResults`).
 - `internal/pool/run.go` is the generic concurrency engine.
 
-The full data flow through `pool.Run` involves two roles. The `jobs` channel is pre-buffered to `len(files)` and filled synchronously before any goroutine starts. A pre-allocated `collected []Result` slice of length `len(files)` holds outputs. The **N worker** goroutines each range over `jobs`, call `process(ctx, f)`, and write the result directly to `collected[f.Index]`. The main goroutine calls `wg.Wait()` then returns `collected` — no results channel, no closer goroutine, no sort.
+`pool.Run` creates an `errgroup` via `errgroup.WithContext`, bounds parallelism with `g.SetLimit(workers)`, launches one `g.Go(...)` goroutine per file, and blocks on `g.Wait()`. Each goroutine calls `process(ctx, f)` and writes its result to `collected[f.Index]`. `g.Wait()` returns `(collected, firstErr)` — no jobs channel, no results channel, no closer goroutine, no sort.
 
 ## 1. Prep (10 min)
 
@@ -31,12 +31,14 @@ Expected:
 
 Open `internal/pool/run.go` and `internal/app/app.go`, then identify:
 
-- Where jobs are pre-filled (lines 27–31 of `run.go`: synchronous buffer fill before workers start).
-- Where `collected` is pre-allocated (line 33).
-- Where workers start (lines 35–46).
-- Where `wg.Wait()` blocks until all workers finish (line 48).
+- Where `errgroup.WithContext` creates the group and derived context.
+- Where `g.SetLimit(workers)` bounds parallelism.
+- Where `collected` is pre-allocated.
+- Where `g.Go(...)` launches one goroutine per file.
+- Where `g.Wait()` blocks until all goroutines finish and returns the first error.
 - Where `Run(...)` wires in `fileProc.Process` (`app.go:67`).
-- Where `AggregateResults` is called (`app.go:68`).
+- Where the `pool.Run` error is checked and the run aborts (`app.go:68–71`).
+- Where `AggregateResults` is called (`app.go:72`).
 
 Mini-task:
 
@@ -44,72 +46,43 @@ Mini-task:
 
 Expected:
 
-- You can point to lines for jobs pre-fill, `collected` pre-allocation, worker start, `wg.Wait()`, `fileProc.Process` wiring, and `processor.AggregateResults(...)` call.
+- You can point to lines for errgroup setup, `collected` pre-allocation, `g.Go` fan-out, `g.Wait()`, `fileProc.Process` wiring, and `processor.AggregateResults(...)` call.
 
-## 3. Pattern: worker pool + fan-out + direct index writes (20 min)
+## 3. The errgroup worker pool (40 min)
 
-Fan-out means the pre-buffered `jobs` channel distributes work across many consumers (the workers). There is no fan-in: workers write results directly to `collected[f.Index]`, a pre-allocated slice, eliminating the results channel, closer goroutine, and send-or-cancel `select` entirely. This is safe because each file has a unique index and no two workers process the same file — no mutex needed. The main goroutine calls `wg.Wait()` and returns `collected` in deterministic order without any sort.
+`internal/pool/run.go` uses one pattern: a bounded worker pool via `errgroup`. Everything else (fan-out, error handling, cancellation, shutdown) is a consequence of how `errgroup` works — not separate patterns.
+
+**Fan-out and direct index writes**
+
+`g.SetLimit(workers)` + `g.Go(...)` distributes work across up to `workers` concurrent goroutines. There is no fan-in: each goroutine writes directly to `collected[f.Index]`, a pre-allocated slice. This eliminates the results channel, closer goroutine, and send-or-cancel `select` entirely. It is safe because each file has a unique index and no two goroutines process the same file — no mutex needed.
+
+**Fail-fast error handling**
+
+When any goroutine returns an error, `errgroup` captures it and cancels the shared context. In-flight goroutines observe `ctx.Err()` at the start of `process` and return quickly. `g.Wait()` returns the first error once all goroutines have exited. `pool.Run` returns `(collected, err)`.
+
+The same cancellation path applies to SIGINT/SIGTERM: `signal.NotifyContext` (`app.go:26`) cancels the root context, which propagates into the errgroup-derived context.
+
+**Shutdown**
+
+`g.Wait()` is the only shutdown mechanism. There is no jobs channel or results channel to close. Each goroutine processes one file and returns; `g.Wait()` unblocks when all have finished.
 
 Run:
 
 ```bash
 go test ./... -run TestRunDeterministicAcrossWorkerCounts
+go test ./... -run TestRunFailsOnInvalidFile
 ```
 
-Focus file: `internal/app/app_integration_test.go`
+Mini-tasks:
 
-Mini-task:
-
-- Explain why outputs from workers=1 and workers=8 are byte-equal.
-
-Expected:
-
-- You mention that workers write to `collected[f.Index]` directly, so `collected` is already in deterministic order when `wg.Wait()` returns — no sort needed. Workers finishing in arbitrary order doesn't affect output order.
-
-Follow-up: a classic fan-in design uses a results channel, a closer goroutine, and a send-or-cancel `select`. Explain why this design needs none of those three things.
-
-## 4. Pattern: context cancellation propagation (20 min)
-
-Cancellation propagates from parent to children through the shared `ctx` value. No explicit signal passing is needed — every goroutine that holds `ctx` can observe cancellation independently.
-
-The three-step path:
-
-1. The parent context is canceled — by `signal.NotifyContext` on SIGINT/SIGTERM (`app.go:26`), a timeout, or an explicit `cancel()` call.
-2. Workers currently calling `process(ctx, f)` have their call return quickly (with a context error) because they hold the cancelled `ctx`. Workers then write the error result to `collected[f.Index]` and loop back to dequeue the next job, where `process` returns quickly again.
-3. Once the `jobs` channel is drained, all workers return and `wg.Wait()` unblocks. `Run` returns `collected` with partial results — processed files have their real result, cancelled files have a context-error result.
-
-Focus:
-
-- App root signal context in `internal/app/app.go` (`signal.NotifyContext`).
-
-Extra mini-task:
-
-- Trace the error path end-to-end: `processor.FileProcessor.Process(...)` returns an error → worker wraps it in `Result{Err: err}` and sends it → `AggregateResults` detects `r.Err != nil` and appends to `errorsOut`, skipping the file's tracks → `report.PrintFailedFiles` reports it at the end. Other files continue processing unaffected.
-
-## 5. Pattern: graceful shutdown ownership (20 min)
-
-There is no results channel to close. Shutdown is simple:
-
-- Workers range over `jobs` until it is exhausted (it was closed before workers started).
-- Each worker calls `wg.Done()` via `defer wg.Done()` when its loop exits.
-- The main goroutine calls `wg.Wait()`, which unblocks when all workers have called `wg.Done()`.
-- `collected` is returned directly — no channel close, no closer goroutine, no collector loop.
-
-Focus:
-
-- `wg.Wait()` at line 48 in `internal/pool/run.go`.
-
-Mini-task:
-
+- Explain why outputs from `workers=1` and `workers=8` are byte-equal.
+- Trace the error path end-to-end: `processor.FileProcessor.Process(...)` returns a `fileError{Path, Stage, Err}` → errgroup cancels ctx and captures the error → `g.Wait()` returns it → `app.Run` prints `"process files: <path>: <stage>: <err>"` to stderr and returns exit code 1. No output is written.
+- Explain why `errgroup.WithContext` replaces `sync.WaitGroup` + `sync.Once` + `context.WithCancel`. (`errgroup` encapsulates all three in a single, well-tested API.)
 - Explain why there is no risk of writing to a closed channel or reading from a closed channel in this design.
 
-Expected:
+## 4. Determinism guarantee: output order after concurrency (15 min)
 
-- Workers only write to a slice, never to a channel. No channel is open during worker execution that could be closed prematurely.
-
-## 7. Determinism guarantee: output order after concurrency (15 min)
-
-Workers finish in nondeterministic order depending on OS scheduling, file size, and parse time. Output order is still deterministic because each worker writes to `collected[f.Index]`, and `f.Index` was assigned sequentially from the input file list before any concurrency started. `collected` is always in the same order as the input `files` slice, regardless of worker scheduling — no sort needed.
+Goroutines finish in nondeterministic order depending on OS scheduling, file size, and parse time. Output order is still deterministic because each goroutine writes to `collected[f.Index]`, and `f.Index` was assigned sequentially from the input file list before any concurrency started. `collected` is always in the same order as the input `files` slice — no sort needed.
 
 Run:
 
@@ -119,26 +92,19 @@ go test ./... -run TestRunDeterministicOrder
 
 Focus file: `internal/pool/order_test.go`
 
-Note: the process closure uses `rand.New(rand.NewSource(int64(42 + f.Index)))` — each worker gets its own `*rand.Rand`. This avoids a data race: `math/rand.Rand` is not goroutine-safe, so sharing one instance across concurrent workers would be flagged by `go test -race ./...`.
+Note: the process closure uses `rand.New(rand.NewSource(int64(42 + f.Index)))` — each goroutine gets its own `*rand.Rand`. This avoids a data race: `math/rand.Rand` is not goroutine-safe, so sharing one instance would be flagged by `go test -race ./...`.
 
-Mini-task:
+Mini-tasks:
 
-- Explain why random worker timing does not affect final order.
+- Explain why random goroutine timing does not affect final order.
+- Explain what is aggregated in `processor.AggregateResults(...)` and why keeping aggregation separate from `Run(...)` improves maintainability. (`Run` is generic and knows nothing about GPX or tracks. Keeping domain logic in `AggregateResults` means the pool can be reused for any file type without modification.)
 
-Expected:
-
-- You mention that workers write to `collected[f.Index]` directly, so `collected` is already in deterministic order when `wg.Wait()` returns — no sort needed. Workers finishing in arbitrary order doesn't affect the final slice order.
-
-Extra mini-task:
-
-- Explain what is aggregated in `processor.AggregateResults(...)` and why keeping aggregation separate from `Run(...)` improves maintainability. (`Run` is generic and knows nothing about GPX or tracks. Keeping domain logic in `AggregateResults` means the pipeline can be reused for any file type without modification.)
-
-## 8. Parallel tests as a separate pattern (10 min)
+## 5. Parallel tests (10 min)
 
 Scan:
 
 ```bash
-rg -n "t\\.Parallel\\(" internal
+rg -n "t\.Parallel\(" internal
 ```
 
 Mini-task:
@@ -152,12 +118,12 @@ Expected:
 ## Checkpoint questions (self-test)
 
 1. Why is writing to `collected[f.Index]` from multiple goroutines safe without a mutex?
-2. Why can `cancel()` be called multiple times safely?
-3. Why is the output of `Run` already in deterministic order without a sort?
-4. What happens to files that are still in `jobs` when the context is canceled?
-5. Why is there no risk of a `send on closed channel` panic in this design?
-6. What would need to change if two files could share the same index?
+2. Why is the output of `Run` already in deterministic order without a sort?
+3. What happens to goroutines that are still running when one goroutine returns an error?
+4. Why is there no risk of a `send on closed channel` panic in this design?
+5. What would need to change if two files could share the same index?
+6. Why does `errgroup.WithContext` replace `sync.WaitGroup` + `sync.Once` + `context.WithCancel`?
 
 ## Optional follow-up exercises
 
-- Add `context.WithTimeout` support around `pool.Run`. Add tests for timeout-driven cancellation and partial result behavior.
+- Add `context.WithTimeout` support around `pool.Run`. Add a test that a timeout cancels in-flight goroutines and returns a deadline-exceeded error.

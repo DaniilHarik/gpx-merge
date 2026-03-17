@@ -14,7 +14,7 @@ func benchmarkRun(b *testing.B, workers int) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = Run(context.Background(), files, workers, func(ctx context.Context, f File) (any, error) {
+		_, _ = Run(context.Background(), files, workers, func(ctx context.Context, f File) (any, error) {
 			_ = ctx
 			return f.Index, nil
 		})

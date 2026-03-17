@@ -35,50 +35,21 @@ The runtime now follows a **Functional Core, Imperative Shell** split:
 Concurrency improves throughput, but output order remains stable:
 
 - Files are assigned deterministic indices during discovery.
-- Workers process files in parallel, each writing to `collected[f.Index]`.
-- `collected` is already in deterministic order when `wg.Wait()` returns — no sort needed.
+- Goroutines process files in parallel, each writing to `collected[f.Index]`.
+- `collected` is already in deterministic order when `g.Wait()` returns — no sort needed.
 
-This guarantees reproducible merged ordering regardless of worker scheduling.
+This guarantees reproducible merged ordering regardless of goroutine scheduling.
 
-## Concurrency Patterns
+## Concurrency
 
-`gpx-merge` uses a small set of explicit concurrency patterns in `internal/pool/run.go`:
+`internal/pool/run.go` is a bounded worker pool implemented with `errgroup.WithContext` (`golang.org/x/sync/errgroup`):
 
-- Bounded worker pool: `workers` controls fixed parallelism for per-file processing.
-- Fan-out: one pre-buffered `jobs` channel distributes work across `N` worker goroutines.
-- Direct index writes: workers write to `collected[f.Index]` directly; no results channel, no closer goroutine, no sort needed. Safe because each file has a unique index and no two workers process the same file.
-- Coordinated shutdown: `wg.Wait()` in the caller blocks until all workers finish, then `collected` is returned.
-- Cooperative cancellation: `process` receives `ctx`; cancellation causes it to return quickly, so workers drain remaining jobs fast without blocking.
+- `g.SetLimit(workers)` bounds parallelism.
+- One `g.Go(...)` goroutine is launched per file; each calls `process(ctx, f)` and writes to `collected[f.Index]` — no results channel, no sort needed.
+- The first error cancels the shared context; `g.Wait()` returns it once all goroutines finish.
+- `process` receives the errgroup-derived `ctx`, so cancellation (error or SIGINT) causes in-flight calls to return quickly.
 
-### Worker Pool vs Pipeline Pattern
-
-`gpx-merge` uses a **worker pool** (fan-out), not a pipeline. The distinction matters when reasoning about concurrency design.
-
-| | Worker Pool | Pipeline |
-|---|---|---|
-| Stages | 1 | N chained |
-| Work units | Independent | Flow through stages |
-| Concurrency | N workers do the same thing | N stages overlap in time |
-| Result ordering | Preserved by index | Preserved naturally |
-| Back-pressure | N/A — pre-buffered jobs | Automatic between stages |
-
-**Worker pool** — all workers apply the same function to independent inputs:
-```
-jobs ──► worker 1 ──► collected[i]
-     ──► worker 2 ──► collected[j]
-     ──► worker 3 ──► collected[k]
-```
-
-**Pipeline** — distinct stages connected by channels, each running concurrently:
-```
-parse ──ch1──► optimize ──ch2──► write
-```
-
-#### Why worker pool fits here
-
-Each GPX file is processed fully and independently: parse → sort segments → optimize → measure all happen sequentially inside one `processor.FileProcessor.Process` call. The stages are not independent bottlenecks that would benefit from overlapping across files. A pipeline would add channel coordination overhead with no throughput gain.
-
-A pipeline would be worth considering if parsing were significantly slower than optimization and you wanted stage 2 to begin on file N while stage 1 was still working on file N+1.
+Each GPX file is processed fully and independently (parse → sort → optimize → measure in one `Process` call), so a single worker pool is sufficient. A pipeline would only help if individual stages were bottlenecks worth overlapping across files.
 
 
 ## Processing Sequence
@@ -90,34 +61,35 @@ Setup
   app.Run ──► pool.Run: Run(ctx, files, workers, fileProc.Process)
 
 Worker pool startup (inside pool.Run)
-  pool.Run: pre-buffer all files into jobs channel (synchronous, len(files) capacity)
+  pool.Run: create errgroup + derived ctx via errgroup.WithContext
   pool.Run: allocate collected []Result (len(files))
-  pool.Run: spawn worker goroutines 1..N
+  pool.Run: g.SetLimit(workers) — bounds concurrency
+  pool.Run: launch one g.Go(...) goroutine per file
 
-Steady-state (each worker, repeated until jobs drained)
-  worker: dequeue File from jobs channel
-  worker ──► Process(ctx, file)
+Steady-state (each goroutine, one file)
+  goroutine ──► Process(ctx, file)
     Process ──► gpx.ParseFile
     Process ──► sortTrackSegmentsByFirstTimestamp  [only with --sort-segments-by-time]
     Process ──► optimizeTrack (per track): simplify + distance in/out
     Process ──► gpx.MeasureTracks
-  Process ──► worker: filePayload | fileError
-  worker: collected[file.Index] = Result
+  Process returns filePayload → goroutine: collected[file.Index] = Result
+  Process returns error → errgroup cancels ctx; g.Wait() will return this error
 
-On ctx cancel (SIGINT / SIGTERM / timeout)
+On ctx cancel (SIGINT / SIGTERM / first file error)
   process(ctx, f) returns early with a context error
-  worker writes error Result to collected[f.Index] and drains remaining jobs fast
+  remaining goroutines exit quickly; g.Wait() returns the first error
 
 Shutdown
-  pool.Run: wg.Wait() — blocks until all workers call wg.Done()
-  pool.Run ──► app.Run: []Result (deterministic order, no sort)
+  pool.Run: g.Wait() — blocks until all goroutines finish
+  pool.Run ──► app.Run: ([]Result, error)
+  On error: app.Run prints to stderr and exits 1 (no output written)
 
-Post-processing
-  app.Run ──► AggregateResults: aggregate stats / warnings / errors
+Post-processing (success path only)
+  app.Run ──► AggregateResults: aggregate stats / warnings
   app.Run ──► WriteMerged (or MeasureMerged in --dry-run)
-  app.Run ──► PrintSummary / PrintFailedFiles / PrintWarnings (+ optional JSON)
+  app.Run ──► PrintSummary / PrintWarnings (+ optional JSON)
   app.Run ──► AppendMetricsCSV  [only with --metrics-csv]
-  app.Run ──► CLI: exit 0 | 1 | 2
+  app.Run ──► CLI: exit 0 | 2
 ```
 
 ## Goroutine Hierarchy
@@ -125,11 +97,11 @@ Post-processing
 ```
 app.Run (caller goroutine)
 └── pool.Run (caller goroutine)
-    ├── pre-buffer jobs channel (synchronous, len(files) capacity)
+    ├── errgroup.WithContext → g, ctx
+    ├── g.SetLimit(workers)
     ├── allocate collected []Result (len(files))
-    ├── spawn worker goroutines 1..N
-    │   └── read job ──► process(ctx, f) ──► collected[f.Index] = Result
-    └── wg.Wait() → return collected
+    ├── g.Go per file → goroutine: process(ctx, f) ──► collected[f.Index] = Result
+    └── g.Wait() → return (collected, firstErr)
 ```
 
 ## Input Validation
@@ -158,5 +130,5 @@ For adjacent segments in the same track, large endpoint gaps can create misleadi
 ## Exit Code Model
 
 - `0`: all files processed successfully
-- `1`: one or more files failed
+- `1`: any file failed during processing (run aborted, no output written)
 - `2`: configuration/usage/runtime setup error

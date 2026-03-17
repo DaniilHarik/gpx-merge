@@ -2,8 +2,9 @@ package pool
 
 import (
 	"context"
-	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type File struct {
@@ -15,36 +16,30 @@ type File struct {
 type Result struct {
 	File     File
 	Payload  any
-	Err      error
 	Duration time.Duration
 }
 
-func Run(ctx context.Context, files []File, workers int, process func(context.Context, File) (any, error)) []Result {
+func Run(ctx context.Context, files []File, workers int, process func(context.Context, File) (any, error)) ([]Result, error) {
 	if workers < 1 {
 		workers = 1
 	}
 
-	jobs := make(chan File, len(files))
-	for _, f := range files {
-		jobs <- f
-	}
-	close(jobs)
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(workers)
 
 	collected := make([]Result, len(files))
 
-	var wg sync.WaitGroup
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for f := range jobs {
-				start := time.Now()
-				payload, err := process(ctx, f)
-				collected[f.Index] = Result{File: f, Payload: payload, Err: err, Duration: time.Since(start)}
+	for _, f := range files {
+		g.Go(func() error {
+			start := time.Now()
+			payload, err := process(ctx, f)
+			if err != nil {
+				return err
 			}
-		}()
+			collected[f.Index] = Result{File: f, Payload: payload, Duration: time.Since(start)}
+			return nil
+		})
 	}
 
-	wg.Wait()
-	return collected
+	return collected, g.Wait()
 }
