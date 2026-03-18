@@ -60,7 +60,7 @@ gpx-merge \
 ### Core flags
 
 1. `--input <dir>`: root folder containing GPX files (default: `./data`)
-2. `--output <file>`: merged GPX output path (default: `./out/merged_optimized.gpx`)
+2. `--output <file>`: merged GPX output path (default: `./out/merged_optimized.gpx`); must be outside `--input`
 
 ### Optional flags
 
@@ -82,18 +82,19 @@ gpx-merge \
 ## 7. Functional Requirements
 
 1. Discover all `*.gpx` files under `--input` recursively.
-2. Parse GPX 1.1 input safely; abort the run on any file error with a structured error message.
-3. For each input track:
+2. Reject configurations where `--output` is inside `--input`, to avoid rediscovering previously merged output as input on later runs.
+3. Parse GPX 1.1 input safely; abort the run on any file error with a structured error message.
+4. For each input track:
    - Preserve logical track identity (`<name>` when present, or filename fallback).
    - Preserve segment names/labels when present.
    - Optimize geometry per segment using line simplification.
    - Enforce `--min-points` so segments remain valid.
    - Drop nonessential metadata by default to reduce size; keep only geometry plus track/segment names unless explicitly retained by flags.
-4. Write one merged GPX:
+5. Write one merged GPX:
    - Single `<gpx>` root.
    - Preserve source track boundaries in output `<trk>` elements; when adjacent segment endpoint gaps exceed `--split-track-gap`, split into additional track parts (`Track Name (part N)`).
    - Track order deterministic (lexicographic path order by default).
-5. Emit run summary:
+6. Emit run summary:
    - Files scanned, files processed, failed files.
    - Active worker count.
    - Points in/out, bytes in/out, distance in/out, reduction percentages.

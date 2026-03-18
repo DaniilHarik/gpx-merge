@@ -17,6 +17,7 @@ Large GPX collections (from watches, bike computers, phones, etc.) are usually f
 - Optional segment reordering by first timestamp (`--sort-segments-by-time`)
 - Human-readable and JSON run reports
 - Optional append-only CSV run metrics log (`--metrics-csv`)
+- Validation that rejects `--output` paths inside `--input`
 
 ## Internal Design
 
@@ -75,6 +76,8 @@ Append run metrics CSV:
 ```
 
 The CSV is append-only and includes `started_at_utc,points_in,points_out,workers,duration_ms,mb_in,mb_out`.
+
+`--output` must be outside `--input`. This prevents reruns from rediscovering a previously merged GPX as a fresh input file.
 
 ## Documentation
 

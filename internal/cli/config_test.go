@@ -69,6 +69,35 @@ func TestParseValidationErrors(t *testing.T) {
 	}
 }
 
+func TestParseRejectsOutputInsideInput(t *testing.T) {
+	t.Parallel()
+	temp := t.TempDir()
+	output := filepath.Join(temp, "out", "merged.gpx")
+
+	_, err := Parse([]string{"--input", temp, "--output", output})
+	if err == nil {
+		t.Fatal("expected error for --output inside --input, got nil")
+	}
+	if err.Error() != "--output must not be inside --input" {
+		t.Fatalf("error = %q, want overlap validation message", err.Error())
+	}
+}
+
+func TestParseAllowsOutputOutsideInput(t *testing.T) {
+	t.Parallel()
+	input := t.TempDir()
+	base := t.TempDir()
+	output := filepath.Join(base, "out", "merged.gpx")
+
+	cfg, err := Parse([]string{"--input", input, "--output", output})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if cfg.Output != output {
+		t.Fatalf("Output = %q, want %q", cfg.Output, output)
+	}
+}
+
 func TestParseJSONReportPath(t *testing.T) {
 	t.Parallel()
 	temp := t.TempDir()

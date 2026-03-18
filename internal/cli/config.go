@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -135,12 +136,25 @@ func validate(cfg Config) error {
 	if !info.IsDir() {
 		return errors.New("--input must be a directory")
 	}
+	absInput, err := filepath.Abs(cfg.Input)
+	if err != nil {
+		return fmt.Errorf("resolve --input: %w", err)
+	}
 	if cfg.Output == "" && !cfg.DryRun {
 		return errors.New("--output cannot be empty")
 	}
 	if cfg.Output != "" {
 		if dir := filepath.Dir(cfg.Output); dir == "" {
 			return errors.New("invalid --output path")
+		}
+		if !cfg.DryRun {
+			absOutput, err := filepath.Abs(cfg.Output)
+			if err != nil {
+				return fmt.Errorf("resolve --output: %w", err)
+			}
+			if pathWithinDir(absOutput, absInput) {
+				return errors.New("--output must not be inside --input")
+			}
 		}
 	}
 	if cfg.JSONReport != "" {
@@ -154,4 +168,15 @@ func validate(cfg Config) error {
 		}
 	}
 	return nil
+}
+
+func pathWithinDir(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

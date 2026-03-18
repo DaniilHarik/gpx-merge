@@ -108,6 +108,7 @@ app.Run (caller goroutine)
 
 Coordinate bounds are validated during parsing in `internal/gpx/parse.go`, immediately before a point is appended to the segment buffer:
 
+- `internal/cli/config.go` rejects `--output` paths inside `--input` before discovery begins. This prevents previously merged GPX output from being rediscovered as input on a later run.
 - Latitude must be in `[-90, 90]`; values outside this range return an error of the form `invalid latitude <value>: must be in [-90, 90]`.
 - Longitude must be in `[-180, 180]`; values outside this range return an error of the form `invalid longitude <value>: must be in [-180, 180]`.
 

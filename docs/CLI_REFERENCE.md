@@ -11,7 +11,7 @@ gpx-merge [flags]
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--input` | string | `./data` | Root folder containing GPX files |
-| `--output` | string | `./out/merged_optimized.gpx` | Merged GPX output path |
+| `--output` | string | `./out/merged_optimized.gpx` | Merged GPX output path; must be outside `--input` |
 | `--workers` | int | `16` | Worker pool size |
 | `--simplify` | float | `0.8` | Base simplification tolerance in meters |
 | `--max-error` | float | `1.5` | Hard cap for allowed geometric deviation |
@@ -30,6 +30,7 @@ gpx-merge [flags]
 ## Behavior Notes
 
 - Discovery is recursive and case-insensitive for `.gpx` extension.
+- `--output` must not point inside `--input`; the CLI rejects that configuration before discovery starts.
 - Any file-level failure aborts the run immediately; no output is written.
 - Output ordering is deterministic, even with concurrent workers.
 - If `--sort-segments-by-time` is enabled and a track has non-parseable timestamps, that track remains in original order.

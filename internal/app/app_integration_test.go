@@ -26,7 +26,7 @@ func TestRunFailsOnInvalidFile(t *testing.T) {
 		t.Fatalf("write invalid: %v", err)
 	}
 
-	outPath := filepath.Join(root, "out", "merged.gpx")
+	outPath := filepath.Join(t.TempDir(), "merged.gpx")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run(context.Background(), []string{
@@ -94,7 +94,7 @@ func TestRunWarnsOnLargeSegmentDiscontinuity(t *testing.T) {
 		t.Fatalf("write gap.gpx: %v", err)
 	}
 
-	outPath := filepath.Join(root, "out", "merged.gpx")
+	outPath := filepath.Join(t.TempDir(), "merged.gpx")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run(context.Background(), []string{
@@ -126,7 +126,7 @@ func TestRunSortSegmentsByTimeFixesOutOfOrderSegments(t *testing.T) {
 		t.Fatalf("write out_of_order.gpx: %v", err)
 	}
 
-	outPath := filepath.Join(root, "out", "merged.gpx")
+	outPath := filepath.Join(t.TempDir(), "merged.gpx")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := Run(context.Background(), []string{
