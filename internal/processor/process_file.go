@@ -2,6 +2,7 @@ package processor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -50,21 +51,30 @@ func (e *fileError) Unwrap() error {
 }
 
 func (p FileProcessor) Process(ctx context.Context, f pool.File) (any, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, &fileError{Stage: "canceled", Path: f.RelPath, Err: err}
+	if err := canceledFileError(ctx, f.RelPath); err != nil {
+		return nil, err
 	}
 	info, err := os.Stat(f.AbsPath)
 	if err != nil {
 		return nil, &fileError{Stage: "stat", Path: f.RelPath, Err: err}
 	}
+	if err := canceledFileError(ctx, f.RelPath); err != nil {
+		return nil, err
+	}
 	tracks, err := gpx.ParseFile(f.AbsPath, f.RelPath)
 	if err != nil {
 		return nil, &fileError{Stage: "parse", Path: f.RelPath, Err: err}
+	}
+	if err := canceledFileError(ctx, f.RelPath); err != nil {
+		return nil, err
 	}
 	warnings := make([]report.WarningItem, 0, 2)
 	if p.cfg.SortSegmentsByTime {
 		reordered := 0
 		tracks, reordered = sortTrackSegmentsByFirstTimestamp(tracks)
+		if err := canceledFileError(ctx, f.RelPath); err != nil {
+			return nil, err
+		}
 		if reordered > 0 {
 			warnings = append(warnings, report.WarningItem{
 				Path:    f.RelPath,
@@ -79,8 +89,14 @@ func (p FileProcessor) Process(ctx context.Context, f pool.File) (any, error) {
 	distanceInM := 0.0
 	distanceOutM := 0.0
 	for _, trk := range tracks {
-		optTrack, inN, outN, inDistM, outDistM, optErr := optimizeTrack(trk, p.optOpts, p.cfg.KeepEle, p.cfg.KeepTime)
+		if err := canceledFileError(ctx, f.RelPath); err != nil {
+			return nil, err
+		}
+		optTrack, inN, outN, inDistM, outDistM, optErr := optimizeTrack(ctx, trk, p.optOpts, p.cfg.KeepEle, p.cfg.KeepTime)
 		if optErr != nil {
+			if isContextError(optErr) {
+				return nil, &fileError{Stage: "canceled", Path: f.RelPath, Err: optErr}
+			}
 			return nil, &fileError{Stage: "optimize", Path: f.RelPath, Err: optErr}
 		}
 		if len(optTrack.Segments) == 0 {
@@ -94,6 +110,9 @@ func (p FileProcessor) Process(ctx context.Context, f pool.File) (any, error) {
 	}
 	if len(optimizedTracks) == 0 {
 		return nil, &fileError{Stage: "optimize", Path: f.RelPath, Err: fmt.Errorf("no valid tracks after optimization")}
+	}
+	if err := canceledFileError(ctx, f.RelPath); err != nil {
+		return nil, err
 	}
 
 	bytesOut, err := gpx.MeasureTracks(optimizedTracks, gpx.WriteOptions{
@@ -117,4 +136,15 @@ func (p FileProcessor) Process(ctx context.Context, f pool.File) (any, error) {
 		DistanceOutM: distanceOutM,
 		Warnings:     append(warnings, fileWarnings(f.RelPath, optimizedTracks, p.cfg.SplitTrackGapMeters)...),
 	}, nil
+}
+
+func canceledFileError(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return &fileError{Stage: "canceled", Path: path, Err: err}
+	}
+	return nil
+}
+
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

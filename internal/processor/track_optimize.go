@@ -1,6 +1,7 @@
 package processor
 
 import (
+	"context"
 	"fmt"
 
 	"gpx-merge/internal/geo"
@@ -8,7 +9,11 @@ import (
 	"gpx-merge/internal/optimize"
 )
 
-func optimizeTrack(track gpx.Track, opts optimize.Options, keepEle, keepTime bool) (gpx.Track, int, int, float64, float64, error) {
+func optimizeTrack(ctx context.Context, track gpx.Track, opts optimize.Options, keepEle, keepTime bool) (gpx.Track, int, int, float64, float64, error) {
+	if err := ctx.Err(); err != nil {
+		return gpx.Track{}, 0, 0, 0, 0, err
+	}
+
 	out := gpx.Track{Name: track.Name, Segments: make([]gpx.Segment, 0, len(track.Segments))}
 	pointsIn := 0
 	pointsOut := 0
@@ -16,6 +21,9 @@ func optimizeTrack(track gpx.Track, opts optimize.Options, keepEle, keepTime boo
 	distanceOutM := 0.0
 
 	for _, seg := range track.Segments {
+		if err := ctx.Err(); err != nil {
+			return gpx.Track{}, 0, 0, 0, 0, err
+		}
 		if len(seg.Points) < 2 {
 			return gpx.Track{}, 0, 0, 0, 0, fmt.Errorf("segment has %d points; expected at least 2", len(seg.Points))
 		}
@@ -61,4 +69,3 @@ func segmentDistanceMeters(points []gpx.Point) float64 {
 	}
 	return total
 }
-

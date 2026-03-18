@@ -1,6 +1,8 @@
 package processor
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"gpx-merge/internal/gpx"
@@ -38,7 +40,7 @@ func TestOptimizeTrack_NormalPath(t *testing.T) {
 		},
 	}
 
-	out, pointsIn, pointsOut, distIn, distOut, err := optimizeTrack(track, defaultOpts, false, false)
+	out, pointsIn, pointsOut, distIn, distOut, err := optimizeTrack(context.Background(), track, defaultOpts, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +70,7 @@ func TestOptimizeTrack_SegmentTooFewPoints(t *testing.T) {
 		},
 	}
 
-	_, _, _, _, _, err := optimizeTrack(track, defaultOpts, false, false)
+	_, _, _, _, _, err := optimizeTrack(context.Background(), track, defaultOpts, false, false)
 	if err == nil {
 		t.Fatal("expected error for segment with 1 point, got nil")
 	}
@@ -88,7 +90,7 @@ func TestOptimizeTrack_KeepEleStripsEleWhenFalse(t *testing.T) {
 		}},
 	}
 
-	out, _, _, _, _, err := optimizeTrack(track, defaultOpts, false, false)
+	out, _, _, _, _, err := optimizeTrack(context.Background(), track, defaultOpts, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,7 +117,7 @@ func TestOptimizeTrack_KeepElePreservesEleWhenTrue(t *testing.T) {
 		}},
 	}
 
-	out, _, _, _, _, err := optimizeTrack(track, defaultOpts, true, false)
+	out, _, _, _, _, err := optimizeTrack(context.Background(), track, defaultOpts, true, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -141,7 +143,7 @@ func TestOptimizeTrack_KeepTimeStripsTimeWhenFalse(t *testing.T) {
 		}},
 	}
 
-	out, _, _, _, _, err := optimizeTrack(track, defaultOpts, false, false)
+	out, _, _, _, _, err := optimizeTrack(context.Background(), track, defaultOpts, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +166,7 @@ func TestOptimizeTrack_MultipleSegments(t *testing.T) {
 		},
 	}
 
-	out, pointsIn, _, _, _, err := optimizeTrack(track, defaultOpts, false, false)
+	out, pointsIn, _, _, _, err := optimizeTrack(context.Background(), track, defaultOpts, false, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,6 +175,41 @@ func TestOptimizeTrack_MultipleSegments(t *testing.T) {
 	}
 	if pointsIn != 50 {
 		t.Fatalf("pointsIn = %d, want 50", pointsIn)
+	}
+}
+
+func TestOptimizeTrack_ContextCanceledBeforeWork(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	track := gpx.Track{
+		Name: "Canceled",
+		Segments: []gpx.Segment{
+			{Points: straightLine(20)},
+		},
+	}
+
+	_, _, _, _, _, err := optimizeTrack(ctx, track, defaultOpts, false, false)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestOptimizeTrack_ContextCanceledBetweenSegments(t *testing.T) {
+	t.Parallel()
+	ctx := &stepCancelContext{Context: context.Background(), cancelOnCall: 2}
+	track := gpx.Track{
+		Name: "Canceled",
+		Segments: []gpx.Segment{
+			{Points: straightLine(20)},
+			{Points: straightLine(20)},
+		},
+	}
+
+	_, _, _, _, _, err := optimizeTrack(ctx, track, defaultOpts, false, false)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
 
@@ -197,4 +234,18 @@ func TestSegmentDistanceMeters_FewerThanTwoPoints(t *testing.T) {
 	if got := segmentDistanceMeters([]gpx.Point{{Lat: 58.0, Lon: 24.0}}); got != 0 {
 		t.Fatalf("distance = %f, want 0 for 1 point", got)
 	}
+}
+
+type stepCancelContext struct {
+	context.Context
+	cancelOnCall int
+	errCalls     int
+}
+
+func (c *stepCancelContext) Err() error {
+	c.errCalls++
+	if c.errCalls >= c.cancelOnCall {
+		return context.Canceled
+	}
+	return nil
 }

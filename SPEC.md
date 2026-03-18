@@ -137,7 +137,7 @@ Design constraints:
 1. Output must be deterministic regardless of worker scheduling.
 2. `errgroup.WithContext` manages the worker pool: `g.SetLimit(workers)` bounds parallelism, workers write results directly to a pre-allocated `collected` slice at their file's index, and `g.Wait()` blocks until all goroutines finish. The first error cancels the shared context and is returned by `g.Wait()`.
 3. No writer-stage backpressure during worker processing because writing starts after result collection.
-4. Context cancellation support on fatal error or SIGINT.
+4. Context cancellation support on fatal error or SIGINT, with workers checking the shared context between major processing stages and between optimized segments.
 5. No intermediate on-disk conversion artifacts; only final output is written.
 6. Architectural split follows Functional Core, Imperative Shell:
    - `internal/app` owns imperative orchestration and side effects.

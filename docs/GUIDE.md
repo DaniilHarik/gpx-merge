@@ -58,7 +58,7 @@ Expected:
 
 **Fail-fast error handling**
 
-When any goroutine returns an error, `errgroup` captures it and cancels the shared context. In-flight goroutines observe `ctx.Err()` at the start of `process` and return quickly. `g.Wait()` returns the first error once all goroutines have exited. `pool.Run` returns `(collected, err)`.
+When any goroutine returns an error, `errgroup` captures it and cancels the shared context. In-flight goroutines re-check `ctx.Err()` between the major `process` stages and between segments inside `optimizeTrack`, so they stop without having to finish the rest of a large file. `g.Wait()` returns the first error once all goroutines have exited. `pool.Run` returns `(collected, err)`.
 
 The same cancellation path applies to SIGINT/SIGTERM: `signal.NotifyContext` (`app.go:26`) cancels the root context, which propagates into the errgroup-derived context.
 

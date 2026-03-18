@@ -47,7 +47,8 @@ This guarantees reproducible merged ordering regardless of goroutine scheduling.
 - `g.SetLimit(workers)` bounds parallelism.
 - One `g.Go(...)` goroutine is launched per file; each calls `process(ctx, f)` and writes to `collected[f.Index]` — no results channel, no sort needed.
 - The first error cancels the shared context; `g.Wait()` returns it once all goroutines finish.
-- `process` receives the errgroup-derived `ctx`, so cancellation (error or SIGINT) causes in-flight calls to return quickly.
+- `process` receives the errgroup-derived `ctx` and re-checks it between major stages (`stat`, parse, optional segment reorder, optimize, measure).
+- `optimizeTrack` also re-checks `ctx` between segments, so a canceled run does not need to finish the rest of a large file before exiting.
 
 Each GPX file is processed fully and independently (parse → sort → optimize → measure in one `Process` call), so a single worker pool is sufficient. A pipeline would only help if individual stages were bottlenecks worth overlapping across files.
 
@@ -68,15 +69,16 @@ Worker pool startup (inside pool.Run)
 
 Steady-state (each goroutine, one file)
   goroutine ──► Process(ctx, file)
+    Process ──► ctx.Err() guard before each major stage
     Process ──► gpx.ParseFile
     Process ──► sortTrackSegmentsByFirstTimestamp  [only with --sort-segments-by-time]
-    Process ──► optimizeTrack (per track): simplify + distance in/out
+    Process ──► optimizeTrack (per track, per-segment ctx checks): simplify + distance in/out
     Process ──► gpx.MeasureTracks
   Process returns filePayload → goroutine: collected[file.Index] = Result
   Process returns error → errgroup cancels ctx; g.Wait() will return this error
 
 On ctx cancel (SIGINT / SIGTERM / first file error)
-  process(ctx, f) returns early with a context error
+  process(ctx, f) returns early at the next stage boundary or segment boundary with a context error
   remaining goroutines exit quickly; g.Wait() returns the first error
 
 Shutdown
