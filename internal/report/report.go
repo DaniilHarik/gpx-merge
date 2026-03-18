@@ -1,34 +1,12 @@
 package report
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
-
-type ConfigSnapshot struct {
-	Input               string  `json:"input"`
-	Output              string  `json:"output"`
-	Workers             int     `json:"workers"`
-	SimplifyMeters      float64 `json:"simplify"`
-	MaxErrorMeters      float64 `json:"max_error"`
-	SplitTrackGapMeters float64 `json:"split_track_gap_meters"`
-	SortSegmentsByTime  bool    `json:"sort_segments_by_time"`
-	Precision           int     `json:"precision"`
-	MinPoints           int     `json:"min_points"`
-	KeepTime            bool    `json:"keep_time"`
-	KeepEle             bool    `json:"keep_ele"`
-	DryRun              bool    `json:"dry_run"`
-	Verbose             bool    `json:"verbose"`
-	IncludeRunMetadata  bool    `json:"include_run_metadata"`
-	JSONReport          string  `json:"json_report,omitempty"`
-	MetricsCSV          string  `json:"metrics_csv,omitempty"`
-}
 
 type Totals struct {
 	FilesScanned      int     `json:"files_scanned"`
@@ -65,26 +43,9 @@ type FileStat struct {
 	DurationMs        int64   `json:"duration_ms"`
 }
 
-type ErrorItem struct {
-	Path    string `json:"path"`
-	Stage   string `json:"stage"`
-	Message string `json:"message"`
-}
-
 type WarningItem struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
-}
-
-type JSONReport struct {
-	StartedAt  string         `json:"started_at"`
-	FinishedAt string         `json:"finished_at"`
-	DurationMs int64          `json:"duration_ms"`
-	Config     ConfigSnapshot `json:"config"`
-	Totals     Totals         `json:"totals"`
-	Files      []FileStat     `json:"files"`
-	Errors     []ErrorItem    `json:"errors"`
-	Warnings   []WarningItem  `json:"warnings,omitempty"`
 }
 
 func ReductionPct(in, out int) float64 {
@@ -108,22 +69,6 @@ func ReductionPctFloat(in, out float64) float64 {
 	return (in - out) / in * 100
 }
 
-func WriteJSON(path string, report JSONReport) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	return enc.Encode(report)
-}
-
 func PrintSummary(w io.Writer, totals Totals, elapsed time.Duration, workers int) {
 	fmt.Fprintf(w, "Files scanned: %s\n", formatGroupedInt(totals.FilesScanned))
 	fmt.Fprintf(w, "Files processed: %s\n", formatGroupedInt(totals.FilesProcessed))
@@ -134,17 +79,6 @@ func PrintSummary(w io.Writer, totals Totals, elapsed time.Duration, workers int
 	fmt.Fprintf(w, "Distance: %.2f km -> %.2f km (%.2f%% reduction)\n", totals.DistanceInM/1000, totals.DistanceOutM/1000, totals.DistanceReduction)
 	fmt.Fprintf(w, "Elapsed: %s\n", elapsed.Round(time.Millisecond))
 	fmt.Fprintf(w, "Throughput: %.2f files/s, %.2f points/s\n", totals.FilesPerSec, totals.PointsPerSec)
-}
-
-func PrintFailedFiles(w io.Writer, errs []ErrorItem) {
-	if len(errs) == 0 {
-		return
-	}
-	fmt.Fprintln(w, "Failed files:")
-	for _, e := range errs {
-		reason := strings.TrimPrefix(e.Message, e.Stage+": ")
-		fmt.Fprintf(w, "- %s (%s): %s\n", e.Path, e.Stage, reason)
-	}
 }
 
 func PrintWarnings(w io.Writer, warnings []WarningItem) {

@@ -24,14 +24,13 @@ gpx-merge [flags]
 | `--dry-run` | bool | `false` | Report projected savings without writing output |
 | `--verbose` | bool | `false` | Print per-file optimization stats |
 | `--include-run-metadata` | bool | `false` | Include generation stats in output metadata |
-| `--json-report` | string | empty | Write machine-readable stats to a JSON file |
 | `--metrics-csv` | string | empty | Append run metrics rows to a CSV file |
 
 ## Behavior Notes
 
 - Discovery is recursive and case-insensitive for `.gpx` extension.
 - `--output` must not point inside `--input`; the CLI rejects that configuration before discovery starts.
-- Any file-level failure aborts the run immediately; no output is written.
+- Any file-level failure aborts the run immediately; no merged GPX output is written.
 - Output ordering is deterministic, even with concurrent workers.
 - If `--sort-segments-by-time` is enabled and a track has non-parseable timestamps, that track remains in original order.
 - Internal package split: orchestration is in `internal/app`, while per-file processing/aggregation are in `internal/processor`.
@@ -66,6 +65,5 @@ The summary includes:
   --precision 6 \
   --split-track-gap 1000 \
   --sort-segments-by-time \
-  --json-report ./out/run.json \
   --metrics-csv ./out/metrics.csv
 ```

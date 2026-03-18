@@ -8,7 +8,7 @@
 2. Discover `.gpx` files recursively (`internal/discovery/discovery.go`)
 3. Run concurrent per-file processing (`internal/pool/run.go` + `internal/processor/process_file.go`)
 4. Aggregate successful tracks and statistics (`internal/processor/aggregate.go`)
-5. Write merged GPX and human/JSON reports (`internal/gpx/write.go`, `internal/report/report.go`)
+5. Write merged GPX and human-readable reports (`internal/gpx/write.go`, `internal/report/report.go`)
 6. Optionally append run metrics CSV rows (`internal/report/metrics_csv.go`)
 
 The app entrypoint is `internal/app/app.go`.
@@ -87,7 +87,7 @@ Shutdown
 Post-processing (success path only)
   app.Run ──► AggregateResults: aggregate stats / warnings
   app.Run ──► WriteMerged (or MeasureMerged in --dry-run)
-  app.Run ──► PrintSummary / PrintWarnings (+ optional JSON)
+  app.Run ──► PrintSummary / PrintWarnings
   app.Run ──► AppendMetricsCSV  [only with --metrics-csv]
   app.Run ──► CLI: exit 0 | 2
 ```

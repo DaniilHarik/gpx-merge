@@ -98,20 +98,6 @@ func TestParseAllowsOutputOutsideInput(t *testing.T) {
 	}
 }
 
-func TestParseJSONReportPath(t *testing.T) {
-	t.Parallel()
-	temp := t.TempDir()
-	reportPath := filepath.Join(temp, "reports", "run.json")
-
-	cfg, err := Parse([]string{"--input", temp, "--json-report", reportPath})
-	if err != nil {
-		t.Fatalf("Parse() error = %v", err)
-	}
-	if cfg.JSONReport != reportPath {
-		t.Fatalf("JSONReport = %q, want %q", cfg.JSONReport, reportPath)
-	}
-}
-
 func TestParseMetricsCSVPath(t *testing.T) {
 	t.Parallel()
 	temp := t.TempDir()

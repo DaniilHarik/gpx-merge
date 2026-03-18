@@ -72,7 +72,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	agg := processor.AggregateResults(results, len(found), cfg.Verbose, stdout)
 	totals := agg.Totals
 	allTracks := agg.AllTracks
-	fileStats := agg.FileStats
 	warningsOut := agg.WarningsOut
 
 	writeOpts := gpx.WriteOptions{
@@ -105,7 +104,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	report.PrintSummary(stdout, totals, elapsed, cfg.Workers)
 	report.PrintWarnings(stdout, warningsOut)
 
-	if err := writeReports(cfg, start, elapsed, totals, fileStats, warningsOut); err != nil {
+	if err := writeReports(cfg, start, elapsed, totals); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
@@ -140,42 +139,7 @@ func writeOutput(cfg cli.Config, allTracks []gpx.Track, writeOpts gpx.WriteOptio
 	return bytesOut, nil
 }
 
-func configSnapshot(cfg cli.Config) report.ConfigSnapshot {
-	return report.ConfigSnapshot{
-		Input:               cfg.Input,
-		Output:              cfg.Output,
-		Workers:             cfg.Workers,
-		SimplifyMeters:      cfg.SimplifyMeters,
-		MaxErrorMeters:      cfg.MaxErrorMeters,
-		SplitTrackGapMeters: cfg.SplitTrackGapMeters,
-		SortSegmentsByTime:  cfg.SortSegmentsByTime,
-		Precision:           cfg.Precision,
-		MinPoints:           cfg.MinPoints,
-		KeepTime:            cfg.KeepTime,
-		KeepEle:             cfg.KeepEle,
-		DryRun:              cfg.DryRun,
-		Verbose:             cfg.Verbose,
-		IncludeRunMetadata:  cfg.IncludeRunMetadata,
-		JSONReport:          cfg.JSONReport,
-		MetricsCSV:          cfg.MetricsCSV,
-	}
-}
-
-func writeReports(cfg cli.Config, start time.Time, elapsed time.Duration, totals report.Totals, fileStats []report.FileStat, warningsOut []report.WarningItem) error {
-	if cfg.JSONReport != "" {
-		jr := report.JSONReport{
-			StartedAt:  start.UTC().Format(time.RFC3339),
-			FinishedAt: time.Now().UTC().Format(time.RFC3339),
-			DurationMs: elapsed.Milliseconds(),
-			Config:     configSnapshot(cfg),
-			Totals:     totals,
-			Files:      fileStats,
-			Warnings:   warningsOut,
-		}
-		if err := report.WriteJSON(cfg.JSONReport, jr); err != nil {
-			return fmt.Errorf("write --json-report: %w", err)
-		}
-	}
+func writeReports(cfg cli.Config, start time.Time, elapsed time.Duration, totals report.Totals) error {
 	if cfg.MetricsCSV != "" {
 		if err := report.AppendMetricsCSV(cfg.MetricsCSV, report.MetricsRow{
 			StartedAt: start,

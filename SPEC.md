@@ -76,8 +76,7 @@ gpx-merge \
 10. `--dry-run`: report projected savings without writing output
 11. `--verbose`: per-file optimization stats
 12. `--include-run-metadata`: include generation stats in `<metadata>`
-13. `--json-report <file>`: write machine-readable run report as JSON
-14. `--metrics-csv <file>`: append one CSV row per completed run with points, workers, duration, and MB in/out
+13. `--metrics-csv <file>`: append one CSV row per completed run with points, workers, duration, and MB in/out
 
 ## 7. Functional Requirements
 
@@ -176,13 +175,10 @@ Targets on a modern laptop (baseline expectations):
 ## 13. Observability
 
 1. Human-readable summary by default.
-2. Optional `--json-report <file>` for machine-readable stats:
-   - Per-file point/byte/distance reductions and error info.
-   - Run-level totals, timings, and distance metrics.
-3. Optional `--metrics-csv <file>` for append-only run log rows:
+2. Optional `--metrics-csv <file>` for append-only run log rows:
    - Header: `started_at_utc,points_in,points_out,workers,duration_ms,mb_in,mb_out`
    - One row appended per completed run.
-4. Human summary output shape:
+3. Human summary output shape:
    - `Files scanned`, `Files processed`, `Files failed`, `Workers`.
    - `Points`, `Bytes`, `Distance`, `Elapsed`, `Throughput`.
    - If warnings occur, print a `Warnings:` section:

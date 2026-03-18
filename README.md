@@ -15,7 +15,7 @@ Large GPX collections (from watches, bike computers, phones, etc.) are usually f
 - Optional preservation of `<time>` and `<ele>`
 - Segment discontinuity warnings and optional track splitting
 - Optional segment reordering by first timestamp (`--sort-segments-by-time`)
-- Human-readable and JSON run reports
+- Human-readable run reports
 - Optional append-only CSV run metrics log (`--metrics-csv`)
 - Validation that rejects `--output` paths inside `--input`
 
@@ -61,12 +61,6 @@ Preserve timestamps and elevation:
 
 ```bash
 ./gpx-merge --input ./data --keep-time --keep-ele
-```
-
-Write JSON report:
-
-```bash
-./gpx-merge --input ./data --json-report ./out/run.json
 ```
 
 Append run metrics CSV:

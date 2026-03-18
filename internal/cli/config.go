@@ -37,7 +37,6 @@ type Config struct {
 	DryRun              bool
 	Verbose             bool
 	IncludeRunMetadata  bool
-	JSONReport          string
 	MetricsCSV          string
 }
 
@@ -78,7 +77,6 @@ func Parse(args []string) (Config, error) {
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "report projected savings without writing output")
 	fs.BoolVar(&cfg.Verbose, "verbose", false, "per-file optimization stats")
 	fs.BoolVar(&cfg.IncludeRunMetadata, "include-run-metadata", false, "include generation stats in metadata")
-	fs.StringVar(&cfg.JSONReport, "json-report", "", "write machine-readable stats to a JSON file")
 	fs.StringVar(&cfg.MetricsCSV, "metrics-csv", "", "append run metrics to a CSV file")
 
 	if err := fs.Parse(args); err != nil {
@@ -155,11 +153,6 @@ func validate(cfg Config) error {
 			if pathWithinDir(absOutput, absInput) {
 				return errors.New("--output must not be inside --input")
 			}
-		}
-	}
-	if cfg.JSONReport != "" {
-		if dir := filepath.Dir(cfg.JSONReport); dir == "" {
-			return errors.New("invalid --json-report path")
 		}
 	}
 	if cfg.MetricsCSV != "" {
