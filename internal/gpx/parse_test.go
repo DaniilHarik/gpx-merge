@@ -1,6 +1,8 @@
 package gpx
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +29,7 @@ func TestParseFile_NamedTrack(t *testing.T) {
   </trkseg></trk>
 </gpx>`)
 
-	tracks, err := ParseFile(p, "ride.gpx")
+	tracks, err := ParseFile(context.Background(), p, "ride.gpx")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -69,7 +71,7 @@ func TestParseFile_SingleUnnamedTrackUsesFilename(t *testing.T) {
   </trkseg></trk>
 </gpx>`)
 
-	tracks, err := ParseFile(p, "my_ride.gpx")
+	tracks, err := ParseFile(context.Background(), p, "my_ride.gpx")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +95,7 @@ func TestParseFile_MultipleUnnamedTracksNumbered(t *testing.T) {
   </trkseg></trk>
 </gpx>`)
 
-	tracks, err := ParseFile(p, "export.gpx")
+	tracks, err := ParseFile(context.Background(), p, "export.gpx")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -119,7 +121,7 @@ func TestParseFile_WhitespaceTrimmed(t *testing.T) {
   </trkseg></trk>
 </gpx>`)
 
-	tracks, err := ParseFile(p, "trip.gpx")
+	tracks, err := ParseFile(context.Background(), p, "trip.gpx")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -140,7 +142,7 @@ func TestParseFile_NoTracks(t *testing.T) {
 	p := writeGPXFile(t, dir, "empty.gpx", `<?xml version="1.0"?>
 <gpx xmlns="http://www.topografix.com/GPX/1/1"></gpx>`)
 
-	_, err := ParseFile(p, "empty.gpx")
+	_, err := ParseFile(context.Background(), p, "empty.gpx")
 	if err == nil {
 		t.Fatal("expected error for GPX with no tracks, got nil")
 	}
@@ -151,7 +153,7 @@ func TestParseFile_MalformedXML(t *testing.T) {
 	dir := t.TempDir()
 	p := writeGPXFile(t, dir, "bad.gpx", `<gpx><trk><unclosed>`)
 
-	_, err := ParseFile(p, "bad.gpx")
+	_, err := ParseFile(context.Background(), p, "bad.gpx")
 	if err == nil {
 		t.Fatal("expected error for malformed XML, got nil")
 	}
@@ -159,7 +161,7 @@ func TestParseFile_MalformedXML(t *testing.T) {
 
 func TestParseFile_FileNotFound(t *testing.T) {
 	t.Parallel()
-	_, err := ParseFile("/nonexistent/path/file.gpx", "file.gpx")
+	_, err := ParseFile(context.Background(), "/nonexistent/path/file.gpx", "file.gpx")
 	if err == nil {
 		t.Fatal("expected error for missing file, got nil")
 	}
@@ -195,7 +197,7 @@ func TestParseFile_InvalidCoordinates(t *testing.T) {
 				`<trkpt lat="58.1" lon="24.1"></trkpt>` +
 				`</trkseg></trk></gpx>`
 			p := writeGPXFile(t, dir, tc.name+".gpx", content)
-			_, err := ParseFile(p, tc.name+".gpx")
+			_, err := ParseFile(context.Background(), p, tc.name+".gpx")
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -210,4 +212,51 @@ func TestParseFile_InvalidCoordinates(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseFile_CanceledContext(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := ParseFile(ctx, "/nonexistent/path/file.gpx", "file.gpx")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func TestParseFile_CanceledDuringDecode(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p := writeGPXFile(t, dir, "ride.gpx", validParseGPX(100))
+
+	ctx := &parseStepCancelContext{Context: context.Background(), cancelOnCall: 4}
+	_, err := ParseFile(ctx, p, "ride.gpx")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func validParseGPX(nPoints int) string {
+	var sb strings.Builder
+	sb.WriteString(`<?xml version="1.0"?><gpx xmlns="http://www.topografix.com/GPX/1/1"><trk><name>Ride</name><trkseg>`)
+	for i := 0; i < nPoints; i++ {
+		sb.WriteString(`<trkpt lat="58.0" lon="24.0"></trkpt>`)
+	}
+	sb.WriteString(`</trkseg></trk></gpx>`)
+	return sb.String()
+}
+
+type parseStepCancelContext struct {
+	context.Context
+	cancelOnCall int
+	errCalls     int
+}
+
+func (c *parseStepCancelContext) Err() error {
+	c.errCalls++
+	if c.errCalls >= c.cancelOnCall {
+		return context.Canceled
+	}
+	return nil
 }

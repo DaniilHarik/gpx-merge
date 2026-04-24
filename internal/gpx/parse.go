@@ -1,8 +1,10 @@
 package gpx
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,16 +32,23 @@ type xmlPoint struct {
 	Time string   `xml:"time"`
 }
 
-func ParseFile(path string, relPath string) ([]Track, error) {
+func ParseFile(ctx context.Context, path string, relPath string) ([]Track, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	dec := xml.NewDecoder(f)
+	dec := xml.NewDecoder(&contextReader{ctx: ctx, r: f})
 	var in xmlGPX
 	if err := dec.Decode(&in); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, fmt.Errorf("decode xml: %w", err)
 	}
 	if len(in.Tracks) == 0 {
@@ -57,6 +66,9 @@ func ParseFile(path string, relPath string) ([]Track, error) {
 
 	out := make([]Track, 0, len(in.Tracks))
 	for _, trk := range in.Tracks {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		name := strings.TrimSpace(trk.Name)
 		if name == "" {
 			if unnamedTotal <= 1 {
@@ -69,8 +81,14 @@ func ParseFile(path string, relPath string) ([]Track, error) {
 
 		segments := make([]Segment, 0, len(trk.Segments))
 		for _, seg := range trk.Segments {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			pts := make([]Point, 0, len(seg.Points))
 			for _, p := range seg.Points {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				if p.Lat < -90 || p.Lat > 90 {
 					return nil, fmt.Errorf("invalid latitude %.6f: must be in [-90, 90]", p.Lat)
 				}
@@ -94,4 +112,16 @@ func ParseFile(path string, relPath string) ([]Track, error) {
 	}
 
 	return out, nil
+}
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }

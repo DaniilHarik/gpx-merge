@@ -61,8 +61,11 @@ func (p FileProcessor) Process(ctx context.Context, f pool.File) (any, error) {
 	if err := canceledFileError(ctx, f.RelPath); err != nil {
 		return nil, err
 	}
-	tracks, err := gpx.ParseFile(f.AbsPath, f.RelPath)
+	tracks, err := gpx.ParseFile(ctx, f.AbsPath, f.RelPath)
 	if err != nil {
+		if isContextError(err) {
+			return nil, &fileError{Stage: "canceled", Path: f.RelPath, Err: err}
+		}
 		return nil, &fileError{Stage: "parse", Path: f.RelPath, Err: err}
 	}
 	if err := canceledFileError(ctx, f.RelPath); err != nil {
