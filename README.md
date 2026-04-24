@@ -26,6 +26,12 @@ Large GPX collections (from watches, bike computers, phones, etc.) are usually f
 - `internal/processor` and `internal/optimize` hold core transformation and aggregation logic.
 - `internal/pool` provides the reusable worker-pool runtime used by the app shell.
 
+### XML token strategy
+
+Parsing uses `encoding/xml.Decoder.Token` instead of decoding into XML mirror structs. Large GPX files can contain hundreds of thousands of `<trkpt>` elements, and struct decoding first builds an intermediate XML-shaped tree before converting it into the app's `Track`, `Segment`, and `Point` model. Token parsing writes directly into that domain model, which reduces duplicate allocations, lowers peak memory, and lets cancellation be checked between token reads.
+
+Writing still uses `xml.Encoder.EncodeToken` rather than hand-built strings. That keeps output escaping and XML correctness in the standard library while avoiding struct marshaling overhead on the hot GPX output path.
+
 ## Requirements
 
 - Go `1.25+`

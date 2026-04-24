@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func writeGPXFile(t *testing.T, dir, name, content string) string {
+func writeGPXFile(t testing.TB, dir, name, content string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
@@ -136,6 +136,60 @@ func TestParseFile_WhitespaceTrimmed(t *testing.T) {
 	}
 }
 
+func TestParseFile_SkipsUnknownElements(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p := writeGPXFile(t, dir, "ride.gpx", `<?xml version="1.0"?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><extensions><ignored><nested>value</nested></ignored></extensions></metadata>
+  <trk>
+    <name>Ride</name>
+    <extensions><ignored><nested>value</nested></ignored></extensions>
+    <trkseg>
+      <name>Seg</name>
+      <extensions><ignored /></extensions>
+      <trkpt lat="58.0" lon="24.0"><extensions><ignored /></extensions><time>2024-01-01T08:00:00Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>`)
+
+	tracks, err := ParseFile(context.Background(), p, "ride.gpx")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tracks) != 1 {
+		t.Fatalf("len(tracks) = %d, want 1", len(tracks))
+	}
+	if tracks[0].Name != "Ride" {
+		t.Fatalf("Name = %q, want Ride", tracks[0].Name)
+	}
+	if got := tracks[0].Segments[0].Points[0].Time; got != "2024-01-01T08:00:00Z" {
+		t.Fatalf("Time = %q, want timestamp", got)
+	}
+}
+
+func TestParseFile_NamespacedElementsUseLocalNames(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	p := writeGPXFile(t, dir, "ride.gpx", `<?xml version="1.0"?>
+<x:gpx xmlns:x="http://www.topografix.com/GPX/1/1">
+  <x:trk><x:name>Ride</x:name><x:trkseg>
+    <x:trkpt lat="58.0" lon="24.0"><x:ele>10.5</x:ele></x:trkpt>
+  </x:trkseg></x:trk>
+</x:gpx>`)
+
+	tracks, err := ParseFile(context.Background(), p, "ride.gpx")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tracks[0].Name != "Ride" {
+		t.Fatalf("Name = %q, want Ride", tracks[0].Name)
+	}
+	if ele := tracks[0].Segments[0].Points[0].Ele; ele == nil || *ele != 10.5 {
+		t.Fatalf("Ele = %v, want 10.5", ele)
+	}
+}
+
 func TestParseFile_NoTracks(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -234,6 +288,23 @@ func TestParseFile_CanceledDuringDecode(t *testing.T) {
 	_, err := ParseFile(ctx, p, "ride.gpx")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+func BenchmarkParseFile(b *testing.B) {
+	dir := b.TempDir()
+	p := writeGPXFile(b, dir, "ride.gpx", validParseGPX(20000))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tracks, err := ParseFile(context.Background(), p, "ride.gpx")
+		if err != nil {
+			b.Fatalf("ParseFile: %v", err)
+		}
+		if len(tracks) != 1 {
+			b.Fatalf("len(tracks) = %d, want 1", len(tracks))
+		}
 	}
 }
 
