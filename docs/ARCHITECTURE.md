@@ -6,7 +6,7 @@
 
 1. Parse and validate CLI config (`internal/cli/config.go`)
 2. Discover `.gpx` files recursively (`internal/discovery/discovery.go`)
-3. Run concurrent per-file processing (`internal/pool/run.go` + `internal/processor/process_file.go`)
+3. Schedule larger files first and run concurrent per-file processing (`internal/app/app.go` + `internal/pool/run.go` + `internal/processor/process_file.go`)
 4. Aggregate successful tracks and statistics (`internal/processor/aggregate.go`)
 5. Write merged GPX and human-readable reports (`internal/gpx/write.go`, `internal/report/report.go`)
 6. Optionally append run metrics CSV rows (`internal/report/metrics_csv.go`)
@@ -35,6 +35,7 @@ The runtime now follows a **Functional Core, Imperative Shell** split:
 Concurrency improves throughput, but output order remains stable:
 
 - Files are assigned deterministic indices during discovery.
+- The app submits a size-descending work slice to the worker pool to reduce large-file tail latency.
 - Goroutines process files in parallel, each writing to `collected[f.Index]`.
 - `collected` is already in deterministic order when `g.Wait()` returns — no sort needed.
 
@@ -45,7 +46,8 @@ This guarantees reproducible merged ordering regardless of goroutine scheduling.
 `internal/pool/run.go` is a bounded worker pool implemented with `errgroup.WithContext` (`golang.org/x/sync/errgroup`):
 
 - `g.SetLimit(workers)` bounds parallelism.
-- One `g.Go(...)` goroutine is launched per file; each calls `process(ctx, f)` and writes to `collected[f.Index]` — no results channel, no sort needed.
+- The app feeds files to `pool.Run` in descending file-size order, with original discovery index as the tie-breaker.
+- One `g.Go(...)` goroutine is launched per scheduled file; each calls `process(ctx, f)` and writes to `collected[f.Index]` — no results channel, no output sort needed.
 - The first error cancels the shared context; `g.Wait()` returns it once all goroutines finish.
 - `process` receives the errgroup-derived `ctx` and re-checks it between major stages (`stat`, parse, optional segment reorder, optimize, measure).
 - `gpx.ParseFile` decodes XML with the same context and a cancellation-aware reader, then re-checks cancellation while converting decoded tracks.
@@ -59,14 +61,15 @@ Each GPX file is processed fully and independently (parse → sort → optimize 
 ```
 Setup
   CLI ──► app.Run: os.Args, stdout, stderr
-  app.Run: parse config, discover files, build processor.NewFileProcessor(cfg, optOpts)
-  app.Run ──► pool.Run: Run(ctx, files, workers, fileProc.Process)
+  app.Run: parse config, discover files, assign lexical output indexes
+  app.Run: build size-descending work slice, build processor.NewFileProcessor(cfg, optOpts)
+  app.Run ──► pool.Run: Run(ctx, work, workers, fileProc.Process)
 
 Worker pool startup (inside pool.Run)
   pool.Run: create errgroup + derived ctx via errgroup.WithContext
-  pool.Run: allocate collected []Result (len(files))
+  pool.Run: allocate collected []Result (len(work))
   pool.Run: g.SetLimit(workers) — bounds concurrency
-  pool.Run: launch one g.Go(...) goroutine per file
+  pool.Run: launch one g.Go(...) goroutine per scheduled file
 
 Steady-state (each goroutine, one file)
   goroutine ──► Process(ctx, file)
@@ -99,6 +102,7 @@ Post-processing (success path only)
 
 ```
 app.Run (caller goroutine)
+├── build work slice: files sorted by SizeBytes desc, Index asc
 └── pool.Run (caller goroutine)
     ├── errgroup.WithContext → g, ctx
     ├── g.SetLimit(workers)

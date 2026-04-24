@@ -8,9 +8,10 @@ import (
 )
 
 type File struct {
-	Index   int
-	RelPath string
-	AbsPath string
+	Index     int
+	RelPath   string
+	AbsPath   string
+	SizeBytes int64
 }
 
 func Discover(inputRoot string) ([]File, error) {
@@ -20,8 +21,9 @@ func Discover(inputRoot string) ([]File, error) {
 	}
 
 	type pair struct {
-		rel string
-		abs string
+		rel  string
+		abs  string
+		size int64
 	}
 	var found []pair
 
@@ -37,7 +39,11 @@ func Discover(inputRoot string) ([]File, error) {
 			if relErr != nil {
 				return relErr
 			}
-			found = append(found, pair{rel: filepath.ToSlash(rel), abs: path})
+			info, infoErr := d.Info()
+			if infoErr != nil {
+				return infoErr
+			}
+			found = append(found, pair{rel: filepath.ToSlash(rel), abs: path, size: info.Size()})
 		}
 		return nil
 	})
@@ -51,7 +57,7 @@ func Discover(inputRoot string) ([]File, error) {
 
 	files := make([]File, 0, len(found))
 	for i, f := range found {
-		files = append(files, File{Index: i, RelPath: f.rel, AbsPath: f.abs})
+		files = append(files, File{Index: i, RelPath: f.rel, AbsPath: f.abs, SizeBytes: f.size})
 	}
 
 	return files, nil

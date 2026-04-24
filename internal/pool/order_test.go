@@ -10,10 +10,10 @@ import (
 func TestRunDeterministicOrder(t *testing.T) {
 	t.Parallel()
 	files := []File{
-		{Index: 0, RelPath: "a.gpx", AbsPath: "a.gpx"},
-		{Index: 1, RelPath: "b.gpx", AbsPath: "b.gpx"},
 		{Index: 2, RelPath: "c.gpx", AbsPath: "c.gpx"},
+		{Index: 0, RelPath: "a.gpx", AbsPath: "a.gpx"},
 		{Index: 3, RelPath: "d.gpx", AbsPath: "d.gpx"},
+		{Index: 1, RelPath: "b.gpx", AbsPath: "b.gpx"},
 	}
 
 	results, err := Run(context.Background(), files, 4, func(ctx context.Context, f File) (any, error) {

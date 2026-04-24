@@ -8,9 +8,10 @@ import (
 )
 
 type File struct {
-	Index   int
-	RelPath string
-	AbsPath string
+	Index     int
+	RelPath   string
+	AbsPath   string
+	SizeBytes int64
 }
 
 type Result struct {

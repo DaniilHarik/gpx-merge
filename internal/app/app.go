@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"syscall"
 	"time"
 
@@ -54,8 +55,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	files := make([]pool.File, 0, len(found))
 	for _, f := range found {
-		files = append(files, pool.File{Index: f.Index, RelPath: f.RelPath, AbsPath: f.AbsPath})
+		files = append(files, pool.File{Index: f.Index, RelPath: f.RelPath, AbsPath: f.AbsPath, SizeBytes: f.SizeBytes})
 	}
+	work := scheduleLargestFilesFirst(files)
 
 	optOpts := optimize.Options{
 		SimplifyMeters: cfg.SimplifyMeters,
@@ -64,7 +66,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	fileProc := processor.NewFileProcessor(cfg, optOpts)
-	results, err := pool.Run(ctx, files, cfg.Workers, fileProc.Process)
+	results, err := pool.Run(ctx, work, cfg.Workers, fileProc.Process)
 	if err != nil {
 		fmt.Fprintf(stderr, "process files: %v\n", err)
 		return 1
@@ -110,6 +112,17 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	return 0
+}
+
+func scheduleLargestFilesFirst(files []pool.File) []pool.File {
+	work := append([]pool.File(nil), files...)
+	sort.SliceStable(work, func(i, j int) bool {
+		if work[i].SizeBytes == work[j].SizeBytes {
+			return work[i].Index < work[j].Index
+		}
+		return work[i].SizeBytes > work[j].SizeBytes
+	})
+	return work
 }
 
 func writeOutput(cfg cli.Config, allTracks []gpx.Track, writeOpts gpx.WriteOptions) (int64, error) {

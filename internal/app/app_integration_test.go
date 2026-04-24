@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gpx-merge/internal/pool"
 )
 
 func TestRunFailsOnInvalidFile(t *testing.T) {
@@ -84,6 +86,30 @@ func TestRunDeterministicAcrossWorkerCounts(t *testing.T) {
 	}
 	if !bytes.Equal(b1, b8) {
 		t.Fatalf("outputs differ across worker counts")
+	}
+}
+
+func TestScheduleLargestFilesFirstKeepsOriginalIndexes(t *testing.T) {
+	t.Parallel()
+	files := []pool.File{
+		{Index: 0, RelPath: "a.gpx", SizeBytes: 11},
+		{Index: 1, RelPath: "b.gpx", SizeBytes: 24},
+		{Index: 2, RelPath: "c.gpx", SizeBytes: 13},
+		{Index: 3, RelPath: "d.gpx", SizeBytes: 24},
+	}
+
+	work := scheduleLargestFilesFirst(files)
+
+	got := make([]int, 0, len(work))
+	for _, f := range work {
+		got = append(got, f.Index)
+	}
+	want := []int{1, 3, 2, 0}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("scheduled indexes = %v, want %v", got, want)
+	}
+	if files[0].Index != 0 || files[1].Index != 1 || files[2].Index != 2 || files[3].Index != 3 {
+		t.Fatalf("input slice was mutated: %#v", files)
 	}
 }
 

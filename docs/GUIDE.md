@@ -12,7 +12,7 @@ Key files and responsibilities:
 - Post-pipeline aggregation is in `internal/processor/aggregate.go` (`processor.AggregateResults`).
 - `internal/pool/run.go` is the generic concurrency engine.
 
-`pool.Run` creates an `errgroup` via `errgroup.WithContext`, bounds parallelism with `g.SetLimit(workers)`, launches one `g.Go(...)` goroutine per file, and blocks on `g.Wait()`. Each goroutine calls `process(ctx, f)` and writes its result to `collected[f.Index]`. `g.Wait()` returns `(collected, firstErr)` — no jobs channel, no results channel, no closer goroutine, no sort.
+`app.Run` keeps the original discovery indexes for output order, then submits work to `pool.Run` in descending file-size order. `pool.Run` creates an `errgroup` via `errgroup.WithContext`, bounds parallelism with `g.SetLimit(workers)`, launches one `g.Go(...)` goroutine per scheduled file, and blocks on `g.Wait()`. Each goroutine calls `process(ctx, f)` and writes its result to `collected[f.Index]`. `g.Wait()` returns `(collected, firstErr)` — no jobs channel, no results channel, no closer goroutine, no output sort.
 
 ## 1. Prep (10 min)
 
@@ -54,7 +54,7 @@ Expected:
 
 **Fan-out and direct index writes**
 
-`g.SetLimit(workers)` + `g.Go(...)` distributes work across up to `workers` concurrent goroutines. There is no fan-in: each goroutine writes directly to `collected[f.Index]`, a pre-allocated slice. This eliminates the results channel, closer goroutine, and send-or-cancel `select` entirely. It is safe because each file has a unique index and no two goroutines process the same file — no mutex needed.
+`g.SetLimit(workers)` + `g.Go(...)` distributes work across up to `workers` concurrent goroutines. The input work slice is size-descending, so larger files are started earlier while smaller files fill the pool around them. There is no fan-in: each goroutine writes directly to `collected[f.Index]`, a pre-allocated slice. This eliminates the results channel, closer goroutine, and send-or-cancel `select` entirely. It is safe because each file has a unique index and no two goroutines process the same file — no mutex needed.
 
 **Fail-fast error handling**
 
@@ -82,7 +82,7 @@ Mini-tasks:
 
 ## 4. Determinism guarantee: output order after concurrency (15 min)
 
-Goroutines finish in nondeterministic order depending on OS scheduling, file size, and parse time. Output order is still deterministic because each goroutine writes to `collected[f.Index]`, and `f.Index` was assigned sequentially from the input file list before any concurrency started. `collected` is always in the same order as the input `files` slice — no sort needed.
+Goroutines finish in nondeterministic order depending on OS scheduling, file size, and parse time. Output order is still deterministic because each goroutine writes to `collected[f.Index]`, and `f.Index` was assigned sequentially from the lexical discovery list before any concurrency started. The work slice can be size-descending because `collected` is keyed by original index — no output sort needed.
 
 Run:
 

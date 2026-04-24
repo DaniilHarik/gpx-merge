@@ -31,7 +31,7 @@ gpx-merge [flags]
 - Discovery is recursive and case-insensitive for `.gpx` extension.
 - `--output` must not point inside `--input`; the CLI rejects that configuration before discovery starts.
 - Any file-level failure aborts the run immediately; no merged GPX output is written.
-- Output ordering is deterministic, even with concurrent workers.
+- Workers start larger files first to reduce tail latency, while output ordering remains deterministic.
 - If `--sort-segments-by-time` is enabled and a track has non-parseable timestamps, that track remains in original order.
 - Internal package split: orchestration is in `internal/app`, while per-file processing/aggregation are in `internal/processor`.
 - `--metrics-csv` writes a header on first write and appends one row per completed run (`started_at_utc,points_in,points_out,workers,duration_ms,mb_in,mb_out`).

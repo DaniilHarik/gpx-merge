@@ -126,16 +126,17 @@ Quality guardrails:
 Phases:
 
 1. Discover phase:
-   - Walks input tree, builds deterministic file list.
+   - Walks input tree, builds deterministic file list, and records file sizes.
 2. Worker pool (`--workers`):
-   - Parse + optimize files in parallel via `errgroup`; results written directly to a pre-allocated slice at each file's index.
+   - Schedules discovered files by descending size before submission to reduce large-file tail latency.
+   - Parse + optimize files in parallel via `errgroup`; results written directly to a pre-allocated slice at each file's original discovery index.
 3. Aggregation + write phase:
    - Aggregates totals/tracks, then writes merged output sequentially.
 
 Design constraints:
 
 1. Output must be deterministic regardless of worker scheduling.
-2. `errgroup.WithContext` manages the worker pool: `g.SetLimit(workers)` bounds parallelism, workers write results directly to a pre-allocated `collected` slice at their file's index, and `g.Wait()` blocks until all goroutines finish. The first error cancels the shared context and is returned by `g.Wait()`.
+2. `errgroup.WithContext` manages the worker pool: `g.SetLimit(workers)` bounds parallelism, larger files are submitted first, workers write results directly to a pre-allocated `collected` slice at their file's original index, and `g.Wait()` blocks until all goroutines finish. The first error cancels the shared context and is returned by `g.Wait()`.
 3. No writer-stage backpressure during worker processing because writing starts after result collection.
 4. Context cancellation support on fatal error or SIGINT, with workers checking the shared context between major processing stages, parser reads, decoded-point conversion, and optimized segments.
 5. No intermediate on-disk conversion artifacts; only final output is written.
