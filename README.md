@@ -93,15 +93,25 @@ Benchmarked on the dataset (70 files, 178 MB, 959 100 points) using 16 workers o
 
 | Metric | Value |
 |---|---|
-| Wall time | ~1.13 s |
-| Points/s | ~850 000 pts/s |
-| Files | 70 files → 1 merged output |
-| Points in → out | 959 100 → 247 507 (74% reduction) |
-| Size in → out | 178 MB → 11.6 MB (94% reduction) |
+| Wall time | 915 ms |
+| Files/s | 76.54 files/s |
+| Points/s | 1 048 700 pts/s |
+| Files scanned → processed | 70 → 70 |
+| Points in → out | 959 100 → 247 507 (74.19% reduction) |
+| Size in → out | 178.24 MB → 11.59 MB (93.50% reduction) |
+| Distance in → out | 5641.29 km → 5625.36 km (0.28% reduction) |
 
 ```
 ./gpx-merge --input ./data --dry-run
-# Elapsed: 1.13s  Throughput: ~62 files/s, ~850000 points/s
+# Files scanned: 70
+# Files processed: 70
+# Files failed: 0
+# Workers: 16
+# Points: 959 100 -> 247 507 (74.19% reduction)
+# Size: 178.24 MB -> 11.59 MB (93.50% reduction)
+# Distance: 5641.29 km -> 5625.36 km (0.28% reduction)
+# Elapsed: 915ms
+# Throughput: 76.54 files/s, 1048699.87 points/s
 ```
 
 ## Development
