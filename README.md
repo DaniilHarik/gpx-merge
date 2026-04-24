@@ -101,19 +101,6 @@ Benchmarked on the dataset (70 files, 178 MB, 959 100 points) using 16 workers o
 | Size in → out | 178.24 MB → 11.59 MB (93.50% reduction) |
 | Distance in → out | 5641.29 km → 5625.36 km (0.28% reduction) |
 
-```
-./gpx-merge --input ./data --dry-run
-# Files scanned: 70
-# Files processed: 70
-# Files failed: 0
-# Workers: 16
-# Points: 959 100 -> 247 507 (74.19% reduction)
-# Size: 178.24 MB -> 11.59 MB (93.50% reduction)
-# Distance: 5641.29 km -> 5625.36 km (0.28% reduction)
-# Elapsed: 915ms
-# Throughput: 76.54 files/s, 1048699.87 points/s
-```
-
 ## Development
 
 ```bash
