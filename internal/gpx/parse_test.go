@@ -60,6 +60,31 @@ func TestParseFile_NamedTrack(t *testing.T) {
 	}
 }
 
+func TestParseFileWithOptionsSkipsUnneededPointFields(t *testing.T) {
+	dir := t.TempDir()
+	p := writeGPXFile(t, dir, "ride.gpx", `<?xml version="1.0"?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><trkseg>
+    <trkpt lat="58.0" lon="24.0"><ele>10.5</ele><time>2024-01-01T08:00:00Z</time></trkpt>
+    <trkpt lat="58.1" lon="24.1"><ele>11.5</ele><time>2024-01-01T08:01:00Z</time></trkpt>
+  </trkseg></trk>
+</gpx>`)
+
+	tracks, err := ParseFileWithOptions(context.Background(), p, "ride.gpx", ParseOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	points := tracks[0].Segments[0].Points
+	for i, point := range points {
+		if point.Ele != nil {
+			t.Fatalf("point %d elevation = %v, want nil", i, point.Ele)
+		}
+		if point.Time != "" {
+			t.Fatalf("point %d time = %q, want empty", i, point.Time)
+		}
+	}
+}
+
 func TestParseFile_SingleUnnamedTrackUsesFilename(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -210,6 +235,16 @@ func TestParseFile_MalformedXML(t *testing.T) {
 	_, err := ParseFile(context.Background(), p, "bad.gpx")
 	if err == nil {
 		t.Fatal("expected error for malformed XML, got nil")
+	}
+}
+
+func TestParseFile_MismatchedUnknownElement(t *testing.T) {
+	dir := t.TempDir()
+	p := writeGPXFile(t, dir, "bad.gpx", `<gpx><extensions><value></other></extensions><trk><trkseg><trkpt lat="58" lon="24"/><trkpt lat="58.1" lon="24.1"/></trkseg></trk></gpx>`)
+
+	_, err := ParseFile(context.Background(), p, "bad.gpx")
+	if err == nil || !strings.Contains(err.Error(), "unexpected closing element") {
+		t.Fatalf("err = %v, want a mismatched element error", err)
 	}
 }
 

@@ -12,7 +12,7 @@ gpx-merge [flags]
 |---|---|---|---|
 | `--input` | string | `./data` | Root folder containing GPX files |
 | `--output` | string | `./out/merged_optimized.gpx` | Merged GPX output path; must be outside `--input` |
-| `--workers` | int | `16` | Worker pool size |
+| `--workers` | int | `8` | Worker pool size |
 | `--simplify` | float | `0.8` | Base simplification tolerance in meters |
 | `--max-error` | float | `1.5` | Hard cap for allowed geometric deviation |
 | `--precision` | int | `6` | Coordinate decimal precision |

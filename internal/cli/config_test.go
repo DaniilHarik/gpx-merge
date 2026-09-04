@@ -20,7 +20,7 @@ func TestParseDefaults(t *testing.T) {
 	if cfg.Output != "./out/merged_optimized.gpx" {
 		t.Fatalf("Output = %q", cfg.Output)
 	}
-	if cfg.Workers != 16 {
+	if cfg.Workers != 8 {
 		t.Fatalf("Workers = %d", cfg.Workers)
 	}
 	if cfg.SimplifyMeters != 0.8 {

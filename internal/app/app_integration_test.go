@@ -178,6 +178,38 @@ func TestRunSortSegmentsByTimeFixesOutOfOrderSegments(t *testing.T) {
 	}
 }
 
+func TestRunPreservesRequestedPointFields(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "track.gpx"), []byte(testGPX("Point Fields", 2)), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	outPath := filepath.Join(t.TempDir(), "merged.gpx")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{
+		"--input", root,
+		"--output", outPath,
+		"--keep-ele",
+		"--keep-time",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, want 0\nstderr=%s", code, stderr.String())
+	}
+
+	out, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if !strings.Contains(string(out), "<ele>10</ele>") {
+		t.Fatalf("output missing elevation: %s", out)
+	}
+	if !strings.Contains(string(out), "<time>2024-01-01T00:00:00Z</time>") {
+		t.Fatalf("output missing timestamp: %s", out)
+	}
+}
+
 func TestRunAppendsMetricsCSV(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

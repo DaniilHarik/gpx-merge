@@ -50,7 +50,7 @@ This guarantees reproducible merged ordering regardless of goroutine scheduling.
 - One `g.Go(...)` goroutine is launched per scheduled file; each calls `process(ctx, f)` and writes to `collected[f.Index]` — no results channel, no output sort needed.
 - The first error cancels the shared context; `g.Wait()` returns it once all goroutines finish.
 - `process` receives the errgroup-derived `ctx` and re-checks it between major stages (`stat`, parse, optional segment reorder, optimize, measure).
-- `gpx.ParseFile` streams XML tokens with the same context and a cancellation-aware reader, checking cancellation between token reads.
+- `gpx.ParseFileWithOptions` streams raw XML tokens through a 256 KiB cancellation-aware buffer. It validates element nesting itself, and it skips `<ele>` and `<time>` decoding unless the run retains the field or needs timestamps to sort segments.
 - `optimizeTrack` also re-checks `ctx` between segments, so a canceled run does not need to finish the rest of a large file before exiting.
 
 Each GPX file is processed fully and independently (parse → sort → optimize → measure in one `Process` call), so a single worker pool is sufficient. A pipeline would only help if individual stages were bottlenecks worth overlapping across files.
@@ -74,7 +74,7 @@ Worker pool startup (inside pool.Run)
 Steady-state (each goroutine, one file)
   goroutine ──► Process(ctx, file)
     Process ──► ctx.Err() guard before each major stage
-    Process ──► gpx.ParseFile(ctx): XML token parse with cancellation-aware reads
+    Process ──► gpx.ParseFileWithOptions(ctx): buffered XML parse with cancellation-aware reads; skip <ele>/<time> decoding unless retained or needed for segment sorting
     Process ──► sortTrackSegmentsByFirstTimestamp  [only with --sort-segments-by-time]
     Process ──► optimizeTrack (per track, per-segment ctx checks): simplify + distance in/out
     Process ──► gpx.MeasureTracks

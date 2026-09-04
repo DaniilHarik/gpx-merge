@@ -12,7 +12,7 @@ Large GPX collections (from watches, bike computers, phones, etc.) are usually f
 - Douglas-Peucker simplification with hard max-error guard
 - Deterministic output order even with concurrent workers
 - Size-aware worker scheduling that starts larger files first
-- Default worker pool size of `16`, chosen from local benchmarking on Apple MacBook M1 Pro (override with `--workers`)
+- Default worker pool size of `8`, chosen from local benchmarking on an Apple M1 Pro (override with `--workers`)
 - Optional preservation of `<time>` and `<ele>`
 - Segment discontinuity warnings and optional track splitting
 - Optional segment reordering by first timestamp (`--sort-segments-by-time`)
@@ -28,7 +28,7 @@ Large GPX collections (from watches, bike computers, phones, etc.) are usually f
 
 ### XML token strategy
 
-Parsing uses `encoding/xml.Decoder.Token` instead of decoding into XML mirror structs. Large GPX files can contain hundreds of thousands of `<trkpt>` elements, and struct decoding first builds an intermediate XML-shaped tree before converting it into the app's `Track`, `Segment`, and `Point` model. Token parsing writes directly into that domain model, which reduces duplicate allocations, lowers peak memory, and lets cancellation be checked between token reads.
+Parsing uses a 256 KiB buffered `encoding/xml.Decoder.RawToken` stream rather than decoding into XML mirror structs. Large GPX files can contain hundreds of thousands of `<trkpt>` elements, and struct decoding first builds an intermediate XML-shaped tree before converting it into the app's `Track`, `Segment`, and `Point` model. The parser writes directly into that domain model, checks element nesting itself, and skips elevation and timestamps when the selected options will discard them. It still checks for cancellation between token reads.
 
 Writing still uses `xml.Encoder.EncodeToken` rather than hand-built strings. That keeps output escaping and XML correctness in the standard library while avoiding struct marshaling overhead on the hot GPX output path.
 
@@ -80,6 +80,8 @@ The CSV is append-only and includes `started_at_utc,points_in,points_out,workers
 
 `--output` must be outside `--input`. This prevents reruns from rediscovering a previously merged GPX as a fresh input file.
 
+`run.sh` uses `GOGC=400` unless `GOGC` is already set. This trades memory for speed on the bundled dataset. Set `GOGC` or `GPX_MERGE_GOGC` to choose a different target.
+
 ## Documentation
 
 - CLI flags, defaults, exit codes, and output details: [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md)
@@ -89,17 +91,17 @@ The CSV is append-only and includes `started_at_utc,points_in,points_out,workers
 
 ## Performance
 
-Benchmarked on the dataset (70 files, 178 MB, 959 100 points) using 16 workers on an Apple M1 Pro:
+Benchmarked with a warm `go run` build cache on the local dataset (70 files, 180 MB, 967 500 points) using 8 workers on an Apple M1 Pro:
 
 | Metric | Value |
 |---|---|
-| Wall time | 915 ms |
-| Files/s | 76.54 files/s |
-| Points/s | 1 048 700 pts/s |
+| App elapsed time | ~590 ms |
+| Files/s | ~118.64 files/s |
+| Points/s | ~1 639 831 pts/s |
 | Files scanned → processed | 70 → 70 |
-| Points in → out | 959 100 → 247 507 (74.19% reduction) |
-| Size in → out | 178.24 MB → 11.59 MB (93.50% reduction) |
-| Distance in → out | 5641.29 km → 5625.36 km (0.28% reduction) |
+| Points in → out | 967 500 → 250 431 (74.12% reduction) |
+| Size in → out | 180.01 MB → 11.72 MB (93.49% reduction) |
+| Distance in → out | 5836.77 km → 5820.79 km (0.27% reduction) |
 
 ## Development
 

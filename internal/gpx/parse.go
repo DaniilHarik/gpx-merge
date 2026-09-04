@@ -1,6 +1,7 @@
 package gpx
 
 import (
+	"bufio"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -11,7 +12,18 @@ import (
 	"strings"
 )
 
+const parseBufferSize = 256 * 1024
+
+type ParseOptions struct {
+	KeepEle  bool
+	KeepTime bool
+}
+
 func ParseFile(ctx context.Context, path string, relPath string) ([]Track, error) {
+	return ParseFileWithOptions(ctx, path, relPath, ParseOptions{KeepEle: true, KeepTime: true})
+}
+
+func ParseFileWithOptions(ctx context.Context, path string, relPath string, opts ParseOptions) ([]Track, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -22,8 +34,9 @@ func ParseFile(ctx context.Context, path string, relPath string) ([]Track, error
 	}
 	defer f.Close()
 
-	dec := xml.NewDecoder(&contextReader{ctx: ctx, r: f})
-	tracks, err := parseGPX(ctx, dec)
+	reader := bufio.NewReaderSize(&contextReader{ctx: ctx, r: f}, parseBufferSize)
+	dec := xml.NewDecoder(reader)
+	tracks, err := parseGPX(ctx, dec, opts)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
@@ -74,7 +87,7 @@ func (r *contextReader) Read(p []byte) (int, error) {
 	return r.r.Read(p)
 }
 
-func parseGPX(ctx context.Context, dec *xml.Decoder) ([]Track, error) {
+func parseGPX(ctx context.Context, dec *xml.Decoder, opts ParseOptions) ([]Track, error) {
 	var tracks []Track
 	for {
 		tok, err := nextToken(ctx, dec)
@@ -95,7 +108,7 @@ func parseGPX(ctx context.Context, dec *xml.Decoder) ([]Track, error) {
 			}
 			continue
 		}
-		parsed, err := parseGPXElement(ctx, dec, start)
+		parsed, err := parseGPXElement(ctx, dec, start, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -103,7 +116,7 @@ func parseGPX(ctx context.Context, dec *xml.Decoder) ([]Track, error) {
 	}
 }
 
-func parseGPXElement(ctx context.Context, dec *xml.Decoder, start xml.StartElement) ([]Track, error) {
+func parseGPXElement(ctx context.Context, dec *xml.Decoder, start xml.StartElement, opts ParseOptions) ([]Track, error) {
 	var tracks []Track
 	for {
 		tok, err := nextToken(ctx, dec)
@@ -119,7 +132,7 @@ func parseGPXElement(ctx context.Context, dec *xml.Decoder, start xml.StartEleme
 				}
 				continue
 			}
-			trk, err := parseTrack(ctx, dec, tok)
+			trk, err := parseTrack(ctx, dec, tok, opts)
 			if err != nil {
 				return nil, err
 			}
@@ -132,7 +145,7 @@ func parseGPXElement(ctx context.Context, dec *xml.Decoder, start xml.StartEleme
 	}
 }
 
-func parseTrack(ctx context.Context, dec *xml.Decoder, start xml.StartElement) (Track, error) {
+func parseTrack(ctx context.Context, dec *xml.Decoder, start xml.StartElement, opts ParseOptions) (Track, error) {
 	var trk Track
 	for {
 		tok, err := nextToken(ctx, dec)
@@ -150,7 +163,7 @@ func parseTrack(ctx context.Context, dec *xml.Decoder, start xml.StartElement) (
 				}
 				trk.Name = strings.TrimSpace(name)
 			case "trkseg":
-				seg, err := parseSegment(ctx, dec, tok)
+				seg, err := parseSegment(ctx, dec, tok, opts)
 				if err != nil {
 					return Track{}, err
 				}
@@ -168,7 +181,7 @@ func parseTrack(ctx context.Context, dec *xml.Decoder, start xml.StartElement) (
 	}
 }
 
-func parseSegment(ctx context.Context, dec *xml.Decoder, start xml.StartElement) (Segment, error) {
+func parseSegment(ctx context.Context, dec *xml.Decoder, start xml.StartElement, opts ParseOptions) (Segment, error) {
 	var seg Segment
 	for {
 		tok, err := nextToken(ctx, dec)
@@ -186,7 +199,7 @@ func parseSegment(ctx context.Context, dec *xml.Decoder, start xml.StartElement)
 				}
 				seg.Name = strings.TrimSpace(name)
 			case "trkpt":
-				pt, err := parsePoint(ctx, dec, tok)
+				pt, err := parsePoint(ctx, dec, tok, opts)
 				if err != nil {
 					return Segment{}, err
 				}
@@ -204,7 +217,7 @@ func parseSegment(ctx context.Context, dec *xml.Decoder, start xml.StartElement)
 	}
 }
 
-func parsePoint(ctx context.Context, dec *xml.Decoder, start xml.StartElement) (Point, error) {
+func parsePoint(ctx context.Context, dec *xml.Decoder, start xml.StartElement, opts ParseOptions) (Point, error) {
 	pt, err := pointFromAttrs(start.Attr)
 	if err != nil {
 		return Point{}, err
@@ -223,6 +236,12 @@ func parsePoint(ctx context.Context, dec *xml.Decoder, start xml.StartElement) (
 		case xml.StartElement:
 			switch tok.Name.Local {
 			case "ele":
+				if !opts.KeepEle {
+					if err := skipElement(ctx, dec, tok); err != nil {
+						return Point{}, err
+					}
+					continue
+				}
 				text, err := readElementText(ctx, dec, tok)
 				if err != nil {
 					return Point{}, err
@@ -233,6 +252,12 @@ func parsePoint(ctx context.Context, dec *xml.Decoder, start xml.StartElement) (
 				}
 				pt.Ele = &ele
 			case "time":
+				if !opts.KeepTime {
+					if err := skipElement(ctx, dec, tok); err != nil {
+						return Point{}, err
+					}
+					continue
+				}
 				text, err := readElementText(ctx, dec, tok)
 				if err != nil {
 					return Point{}, err
@@ -284,19 +309,22 @@ func validatePoint(pt Point) error {
 
 func readElementText(ctx context.Context, dec *xml.Decoder, start xml.StartElement) (string, error) {
 	var text strings.Builder
-	depth := 1
-	for depth > 0 {
+	stack := []xml.StartElement{start}
+	for len(stack) > 0 {
 		tok, err := nextToken(ctx, dec)
 		if err != nil {
 			return "", err
 		}
 		switch tok := tok.(type) {
 		case xml.StartElement:
-			depth++
+			stack = append(stack, tok)
 		case xml.EndElement:
-			depth--
+			if !sameElement(tok, stack[len(stack)-1]) {
+				return "", mismatchedEndElementError(tok, stack[len(stack)-1])
+			}
+			stack = stack[:len(stack)-1]
 		case xml.CharData:
-			if depth == 1 {
+			if len(stack) == 1 {
 				text.Write([]byte(tok))
 			}
 		}
@@ -305,17 +333,20 @@ func readElementText(ctx context.Context, dec *xml.Decoder, start xml.StartEleme
 }
 
 func skipElement(ctx context.Context, dec *xml.Decoder, start xml.StartElement) error {
-	depth := 1
-	for depth > 0 {
+	stack := []xml.StartElement{start}
+	for len(stack) > 0 {
 		tok, err := nextToken(ctx, dec)
 		if err != nil {
 			return err
 		}
-		switch tok.(type) {
+		switch tok := tok.(type) {
 		case xml.StartElement:
-			depth++
+			stack = append(stack, tok)
 		case xml.EndElement:
-			depth--
+			if !sameElement(tok, stack[len(stack)-1]) {
+				return mismatchedEndElementError(tok, stack[len(stack)-1])
+			}
+			stack = stack[:len(stack)-1]
 		}
 	}
 	return nil
@@ -325,7 +356,9 @@ func nextToken(ctx context.Context, dec *xml.Decoder) (xml.Token, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	tok, err := dec.Token()
+	// The parser only uses local element names. RawToken avoids namespace
+	// translation overhead; readElementText and skipElement validate nesting.
+	tok, err := dec.RawToken()
 	if err != nil {
 		return nil, err
 	}
@@ -337,4 +370,8 @@ func nextToken(ctx context.Context, dec *xml.Decoder) (xml.Token, error) {
 
 func sameElement(end xml.EndElement, start xml.StartElement) bool {
 	return end.Name.Local == start.Name.Local && end.Name.Space == start.Name.Space
+}
+
+func mismatchedEndElementError(end xml.EndElement, start xml.StartElement) error {
+	return fmt.Errorf("unexpected closing element </%s>; expected </%s>", end.Name.Local, start.Name.Local)
 }

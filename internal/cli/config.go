@@ -14,7 +14,7 @@ import (
 const (
 	defaultInput     = "./data"
 	defaultOutput    = "./out/merged_optimized.gpx"
-	defaultWorkers   = 16
+	defaultWorkers   = 8
 	defaultSimplify  = 0.8
 	defaultMaxError  = 1.5
 	defaultSplitGap  = 1000.0
