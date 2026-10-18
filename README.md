@@ -46,6 +46,15 @@ go test ./...
 
 ### Performance regression test
 
+Check the local dataset against a time limit with [verify.sh](verify.sh):
+
+```bash
+./verify.sh 650ms
+./verify.sh --help
+```
+
+This checks the app's reported elapsed time. See the script's help for threshold handling and exit codes.
+
 The normal test suite includes a fixed end-to-end merge workload which must finish within five seconds. This intentionally conservative limit catches major regressions without depending on one machine's benchmark result. Use `GPX_MERGE_PERFORMANCE_BUDGET` to set an explicit Go duration for a CI runner or local performance gate:
 
 ```bash
