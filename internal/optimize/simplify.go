@@ -45,19 +45,20 @@ func SimplifyIndices(points []Coord, opts Options) Result {
 		eps = 0
 	}
 
-	best := simplifyWithEpsilon(points, eps)
+	projected := project(points)
+	best := simplifyWithEpsilon(projected, eps)
 	best.AppliedTolerance = eps
 
 	if opts.MaxErrorMeters > 0 && best.MaxDeviation > opts.MaxErrorMeters {
 		lo := 0.0
 		hi := eps
-		fallback := simplifyWithEpsilon(points, 0)
+		fallback := simplifyWithEpsilon(projected, 0)
 		fallback.AppliedTolerance = 0
 		best = fallback
 
 		for range 24 {
 			mid := (lo + hi) / 2
-			candidate := simplifyWithEpsilon(points, mid)
+			candidate := simplifyWithEpsilon(projected, mid)
 			candidate.AppliedTolerance = mid
 			if candidate.MaxDeviation <= opts.MaxErrorMeters {
 				best = candidate
@@ -68,18 +69,20 @@ func SimplifyIndices(points []Coord, opts Options) Result {
 		}
 	}
 
+	before := len(best.Indexes)
 	best.Indexes = enforceMinPoints(best.Indexes, n, opts.MinPoints)
-	best.MaxDeviation = polylineMaxDeviation(points, best.Indexes)
+	if len(best.Indexes) != before {
+		best.MaxDeviation = polylineMaxDeviation(projected, best.Indexes)
+	}
 	return best
 }
 
-func simplifyWithEpsilon(points []Coord, epsilon float64) Result {
+func simplifyWithEpsilon(points [][2]float64, epsilon float64) Result {
 	n := len(points)
 	keep := make([]bool, n)
 	keep[0], keep[n-1] = true, true
 
-	projected := project(points)
-	dp(projected, 0, n-1, epsilon, keep)
+	dp(points, 0, n-1, epsilon, keep)
 
 	idx := make([]int, 0, n)
 	for i, k := range keep {
@@ -150,19 +153,18 @@ func pointToSegmentDistance(px, py, ax, ay, bx, by float64) float64 {
 	return math.Hypot(px-x, py-y)
 }
 
-func polylineMaxDeviation(points []Coord, indexes []int) float64 {
+func polylineMaxDeviation(points [][2]float64, indexes []int) float64 {
 	if len(points) <= 2 || len(indexes) <= 1 {
 		return 0
 	}
-	proj := project(points)
 	maxDist := 0.0
 	for i := 0; i < len(indexes)-1; i++ {
 		start := indexes[i]
 		end := indexes[i+1]
-		ax, ay := proj[start][0], proj[start][1]
-		bx, by := proj[end][0], proj[end][1]
+		ax, ay := points[start][0], points[start][1]
+		bx, by := points[end][0], points[end][1]
 		for j := start; j <= end; j++ {
-			d := pointToSegmentDistance(proj[j][0], proj[j][1], ax, ay, bx, by)
+			d := pointToSegmentDistance(points[j][0], points[j][1], ax, ay, bx, by)
 			if d > maxDist {
 				maxDist = d
 			}

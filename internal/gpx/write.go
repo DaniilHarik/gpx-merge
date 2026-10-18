@@ -1,6 +1,8 @@
 package gpx
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -23,12 +25,49 @@ type WriteOptions struct {
 }
 
 func WriteMerged(w io.Writer, tracks []Track, opts WriteOptions) (int64, error) {
+	return writeMerged(w, opts, func(enc *xml.Encoder, _ io.Writer) error {
+		return writeTracks(enc, tracks, opts)
+	})
+}
+
+// EncodeTracks serializes one source's optimized tracks for both measurement
+// and later assembly. The returned fragment has no document header or root.
+func EncodeTracks(tracks []Track, opts WriteOptions) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := xml.NewEncoder(&buf)
+	if err := writeTracks(enc, tracks, opts); err != nil {
+		return nil, err
+	}
+	if err := enc.Flush(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// WriteMergedParts wraps ordered fragments from EncodeTracks in one document.
+// Parts must have been encoded with the desired point and track options.
+func WriteMergedParts(w io.Writer, parts [][]byte, opts WriteOptions) (int64, error) {
+	return writeMerged(w, opts, func(enc *xml.Encoder, output io.Writer) error {
+		if err := enc.Flush(); err != nil {
+			return err
+		}
+		for _, part := range parts {
+			if _, err := output.Write(part); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func writeMerged(w io.Writer, opts WriteOptions, writeBody func(*xml.Encoder, io.Writer) error) (int64, error) {
 	cw := &countingWriter{w: w}
-	if _, err := io.WriteString(cw, xml.Header); err != nil {
+	buffer := bufio.NewWriterSize(cw, 256*1024)
+	if _, err := io.WriteString(buffer, xml.Header); err != nil {
 		return cw.n, err
 	}
 
-	enc := xml.NewEncoder(cw)
+	enc := xml.NewEncoder(buffer)
 	root := xml.StartElement{
 		Name: xml.Name{Local: "gpx"},
 		Attr: []xml.Attr{
@@ -46,13 +85,16 @@ func WriteMerged(w io.Writer, tracks []Track, opts WriteOptions) (int64, error) 
 			return cw.n, err
 		}
 	}
-	if err := writeTracks(enc, tracks, opts); err != nil {
+	if err := writeBody(enc, buffer); err != nil {
 		return cw.n, err
 	}
 	if err := enc.EncodeToken(root.End()); err != nil {
 		return cw.n, err
 	}
 	if err := enc.Flush(); err != nil {
+		return cw.n, err
+	}
+	if err := buffer.Flush(); err != nil {
 		return cw.n, err
 	}
 	return cw.n, nil
@@ -97,6 +139,12 @@ func writeMetadata(enc *xml.Encoder, opts WriteOptions) error {
 }
 
 func writeTracks(enc *xml.Encoder, tracks []Track, opts WriteOptions) error {
+	// EncodeToken consumes attributes synchronously, so reuse their storage
+	// instead of allocating an attribute slice for every output point.
+	ptStart := xml.StartElement{
+		Name: xml.Name{Local: "trkpt"},
+		Attr: []xml.Attr{{Name: xml.Name{Local: "lat"}}, {Name: xml.Name{Local: "lon"}}},
+	}
 	for _, trk := range tracks {
 		validSegments := make([]Segment, 0, len(trk.Segments))
 		for _, seg := range trk.Segments {
@@ -133,13 +181,8 @@ func writeTracks(enc *xml.Encoder, tracks []Track, opts WriteOptions) error {
 				}
 
 				for _, p := range seg.Points {
-					ptStart := xml.StartElement{
-						Name: xml.Name{Local: "trkpt"},
-						Attr: []xml.Attr{
-							{Name: xml.Name{Local: "lat"}, Value: optimize.FormatCoordinate(p.Lat, opts.Precision)},
-							{Name: xml.Name{Local: "lon"}, Value: optimize.FormatCoordinate(p.Lon, opts.Precision)},
-						},
-					}
+					ptStart.Attr[0].Value = optimize.FormatCoordinate(p.Lat, opts.Precision)
+					ptStart.Attr[1].Value = optimize.FormatCoordinate(p.Lon, opts.Precision)
 					if err := enc.EncodeToken(ptStart); err != nil {
 						return err
 					}

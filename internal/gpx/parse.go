@@ -1,7 +1,7 @@
 package gpx
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/xml"
 	"fmt"
@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-const parseBufferSize = 256 * 1024
 
 type ParseOptions struct {
 	KeepEle  bool
@@ -34,8 +32,16 @@ func ParseFileWithOptions(ctx context.Context, path string, relPath string, opts
 	}
 	defer f.Close()
 
-	reader := bufio.NewReaderSize(&contextReader{ctx: ctx, r: f}, parseBufferSize)
-	dec := xml.NewDecoder(reader)
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	var data bytes.Buffer
+	data.Grow(int(info.Size()))
+	if _, err := data.ReadFrom(&contextReader{ctx: ctx, r: f}); err != nil {
+		return nil, err
+	}
+	dec := newPointDecoder(data.Bytes())
 	tracks, err := parseGPX(ctx, dec, opts)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -87,7 +93,11 @@ func (r *contextReader) Read(p []byte) (int, error) {
 	return r.r.Read(p)
 }
 
-func parseGPX(ctx context.Context, dec *xml.Decoder, opts ParseOptions) ([]Track, error) {
+type tokenDecoder interface {
+	RawToken() (xml.Token, error)
+}
+
+func parseGPX(ctx context.Context, dec tokenDecoder, opts ParseOptions) ([]Track, error) {
 	var tracks []Track
 	for {
 		tok, err := nextToken(ctx, dec)
@@ -116,7 +126,7 @@ func parseGPX(ctx context.Context, dec *xml.Decoder, opts ParseOptions) ([]Track
 	}
 }
 
-func parseGPXElement(ctx context.Context, dec *xml.Decoder, start xml.StartElement, opts ParseOptions) ([]Track, error) {
+func parseGPXElement(ctx context.Context, dec tokenDecoder, start xml.StartElement, opts ParseOptions) ([]Track, error) {
 	var tracks []Track
 	for {
 		tok, err := nextToken(ctx, dec)
@@ -145,7 +155,7 @@ func parseGPXElement(ctx context.Context, dec *xml.Decoder, start xml.StartEleme
 	}
 }
 
-func parseTrack(ctx context.Context, dec *xml.Decoder, start xml.StartElement, opts ParseOptions) (Track, error) {
+func parseTrack(ctx context.Context, dec tokenDecoder, start xml.StartElement, opts ParseOptions) (Track, error) {
 	var trk Track
 	for {
 		tok, err := nextToken(ctx, dec)
@@ -181,9 +191,16 @@ func parseTrack(ctx context.Context, dec *xml.Decoder, start xml.StartElement, o
 	}
 }
 
-func parseSegment(ctx context.Context, dec *xml.Decoder, start xml.StartElement, opts ParseOptions) (Segment, error) {
+func parseSegment(ctx context.Context, dec tokenDecoder, start xml.StartElement, opts ParseOptions) (Segment, error) {
 	var seg Segment
 	for {
+		if fast, ok := dec.(*pointDecoder); ok {
+			var err error
+			seg.Points, err = fast.appendPoints(ctx, seg.Points, opts)
+			if err != nil {
+				return Segment{}, err
+			}
+		}
 		tok, err := nextToken(ctx, dec)
 		if err != nil {
 			return Segment{}, err
@@ -217,7 +234,7 @@ func parseSegment(ctx context.Context, dec *xml.Decoder, start xml.StartElement,
 	}
 }
 
-func parsePoint(ctx context.Context, dec *xml.Decoder, start xml.StartElement, opts ParseOptions) (Point, error) {
+func parsePoint(ctx context.Context, dec tokenDecoder, start xml.StartElement, opts ParseOptions) (Point, error) {
 	pt, err := pointFromAttrs(start.Attr)
 	if err != nil {
 		return Point{}, err
@@ -307,7 +324,7 @@ func validatePoint(pt Point) error {
 	return nil
 }
 
-func readElementText(ctx context.Context, dec *xml.Decoder, start xml.StartElement) (string, error) {
+func readElementText(ctx context.Context, dec tokenDecoder, start xml.StartElement) (string, error) {
 	var text strings.Builder
 	stack := []xml.StartElement{start}
 	for len(stack) > 0 {
@@ -332,7 +349,7 @@ func readElementText(ctx context.Context, dec *xml.Decoder, start xml.StartEleme
 	return text.String(), nil
 }
 
-func skipElement(ctx context.Context, dec *xml.Decoder, start xml.StartElement) error {
+func skipElement(ctx context.Context, dec tokenDecoder, start xml.StartElement) error {
 	stack := []xml.StartElement{start}
 	for len(stack) > 0 {
 		tok, err := nextToken(ctx, dec)
@@ -352,7 +369,7 @@ func skipElement(ctx context.Context, dec *xml.Decoder, start xml.StartElement) 
 	return nil
 }
 
-func nextToken(ctx context.Context, dec *xml.Decoder) (xml.Token, error) {
+func nextToken(ctx context.Context, dec tokenDecoder) (xml.Token, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

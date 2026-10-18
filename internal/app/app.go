@@ -73,7 +73,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	agg := processor.AggregateResults(results, len(found), cfg.Verbose, stdout)
 	totals := agg.Totals
-	allTracks := agg.AllTracks
 	warningsOut := agg.WarningsOut
 
 	writeOpts := gpx.WriteOptions{
@@ -87,7 +86,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	writeOpts.MetadataDesc = processor.MetadataDesc(totals)
 
-	bytesOut, writeErr := writeOutput(cfg, allTracks, writeOpts)
+	bytesOut, writeErr := writeOutput(cfg, agg.EncodedParts, writeOpts)
 	if writeErr != nil {
 		fmt.Fprintln(stderr, writeErr)
 		return 2
@@ -125,9 +124,9 @@ func scheduleLargestFilesFirst(files []pool.File) []pool.File {
 	return work
 }
 
-func writeOutput(cfg cli.Config, allTracks []gpx.Track, writeOpts gpx.WriteOptions) (int64, error) {
+func writeOutput(cfg cli.Config, parts [][]byte, writeOpts gpx.WriteOptions) (int64, error) {
 	if cfg.DryRun {
-		bytesOut, err := gpx.MeasureMerged(allTracks, writeOpts)
+		bytesOut, err := gpx.WriteMergedParts(io.Discard, parts, writeOpts)
 		if err != nil {
 			return 0, fmt.Errorf("measure merged output: %w", err)
 		}
@@ -141,7 +140,7 @@ func writeOutput(cfg cli.Config, allTracks []gpx.Track, writeOpts gpx.WriteOptio
 	if err != nil {
 		return 0, fmt.Errorf("create output file: %w", err)
 	}
-	bytesOut, writeErr := gpx.WriteMerged(f, allTracks, writeOpts)
+	bytesOut, writeErr := gpx.WriteMergedParts(f, parts, writeOpts)
 	closeErr := f.Close()
 	if writeErr != nil {
 		return 0, fmt.Errorf("write output: %w", writeErr)

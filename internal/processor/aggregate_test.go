@@ -24,6 +24,7 @@ func TestAggregateResults_AllSuccess(t *testing.T) {
 	results := []pool.Result{
 		makeSuccessResult(0, "a.gpx", filePayload{
 			Tracks:       []gpx.Track{{Name: "A"}},
+			Encoded:      []byte("<trk><name>A</name></trk>"),
 			PointsIn:     100,
 			PointsOut:    50,
 			BytesIn:      1000,
@@ -33,6 +34,7 @@ func TestAggregateResults_AllSuccess(t *testing.T) {
 		}),
 		makeSuccessResult(1, "b.gpx", filePayload{
 			Tracks:       []gpx.Track{{Name: "B"}},
+			Encoded:      []byte("<trk><name>B</name></trk>"),
 			PointsIn:     200,
 			PointsOut:    80,
 			BytesIn:      2000,
@@ -67,6 +69,9 @@ func TestAggregateResults_AllSuccess(t *testing.T) {
 	}
 	if len(agg.AllTracks) != 2 {
 		t.Fatalf("len(AllTracks) = %d, want 2", len(agg.AllTracks))
+	}
+	if len(agg.EncodedParts) != 2 || string(agg.EncodedParts[0]) != "<trk><name>A</name></trk>" || string(agg.EncodedParts[1]) != "<trk><name>B</name></trk>" {
+		t.Fatalf("encoded parts lost source order: %q", agg.EncodedParts)
 	}
 	if len(agg.FileStats) != 2 {
 		t.Fatalf("len(FileStats) = %d, want 2", len(agg.FileStats))

@@ -15,6 +15,7 @@ import (
 
 type filePayload struct {
 	Tracks       []gpx.Track
+	Encoded      []byte
 	PointsIn     int
 	PointsOut    int
 	BytesIn      int64
@@ -121,7 +122,7 @@ func (p FileProcessor) Process(ctx context.Context, f pool.File) (any, error) {
 		return nil, err
 	}
 
-	bytesOut, err := gpx.MeasureTracks(optimizedTracks, gpx.WriteOptions{
+	encoded, err := gpx.EncodeTracks(optimizedTracks, gpx.WriteOptions{
 		Creator:             "",
 		Precision:           p.cfg.Precision,
 		KeepEle:             p.cfg.KeepEle,
@@ -134,10 +135,11 @@ func (p FileProcessor) Process(ctx context.Context, f pool.File) (any, error) {
 
 	return filePayload{
 		Tracks:       optimizedTracks,
+		Encoded:      encoded,
 		PointsIn:     pointsIn,
 		PointsOut:    pointsOut,
 		BytesIn:      info.Size(),
-		BytesOut:     bytesOut,
+		BytesOut:     int64(len(encoded)),
 		DistanceInM:  distanceInM,
 		DistanceOutM: distanceOutM,
 		Warnings:     append(warnings, fileWarnings(f.RelPath, optimizedTracks, p.cfg.SplitTrackGapMeters)...),

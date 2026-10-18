@@ -4,6 +4,8 @@
 
 Accepted. Implemented on 2026-04-24 and refined on 2026-09-04; recorded retrospectively on 2026-10-18.
 
+Refined on 2026-10-18 by [ADR 0004](0004-accelerate-point-parsing-and-reuse-encoded-tracks.md), which adds a fast path for ordinary points and retains raw-token decoding for other XML.
+
 ## Context
 
 Large GPX files can contain hundreds of thousands of track points. The former parser decoded an XML-shaped struct tree, then copied it into the track model. The README added with the replacement records duplicate allocations and peak memory as reasons for parsing directly into tracks. It also records the value of checking cancellation between token reads.
@@ -16,7 +18,7 @@ Read XML tokens into the track model without building an intermediate XML-shaped
 
 - Decode XML mirror structs, then convert them into tracks. This was the previous implementation, replaced to avoid the intermediate representation.
 - Use `Decoder.Token` to build tracks directly. This was the first replacement.
-- Use `Decoder.RawToken` with explicit nesting checks. This is the current approach; the code records avoiding namespace translation overhead as the reason for the refinement.
+- Use `Decoder.RawToken` with explicit nesting checks. This is the general XML decoding path; the code records avoiding namespace translation overhead as the reason for the refinement.
 
 ## Consequences
 

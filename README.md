@@ -49,11 +49,13 @@ go test ./...
 Check the local dataset against a time limit with [verify.sh](verify.sh):
 
 ```bash
-./verify.sh 650ms
+./verify.sh
 ./verify.sh --help
 ```
 
-This checks the app's reported elapsed time. See the script's help for threshold handling and exit codes.
+This checks the app's reported elapsed time and compares the merged GPX with the local reference file. See the script's help for required file paths, threshold handling, and exit codes.
+
+See [Performance](#performance) for the latest local benchmark.
 
 The normal test suite includes a fixed end-to-end merge workload which must finish within five seconds. This intentionally conservative limit catches major regressions without depending on one machine's benchmark result. Use `GPX_MERGE_PERFORMANCE_BUDGET` to set an explicit Go duration for a CI runner or local performance gate:
 
@@ -61,19 +63,25 @@ The normal test suite includes a fixed end-to-end merge workload which must fini
 GPX_MERGE_PERFORMANCE_BUDGET=2s go test ./internal/app -run TestRunCompletesWithinPerformanceBudget
 ```
 
-## Historical performance
+## Performance
 
-Commit `645ca3a` recorded these measurements on 2026-09-04 using eight workers on an Apple M1 Pro with a warm `go run` build cache. They describe that local dataset and build, not a current performance guarantee.
+Measured on 2026-10-18 using the current working tree, an Apple M1 Pro, Go 1.26.1 on macOS arm64, eight workers, and `GOGC=400`. One warm-up run of `./verify.sh` took 182 ms, followed by 20 consecutive measured runs on the local `data/` collection. The warm-up is excluded from the table.
 
 | Metric | Value |
 |---|---|
-| App elapsed time | ~590 ms |
-| Files/s | ~118.64 files/s |
-| Points/s | ~1 639 831 pts/s |
-| Files scanned → processed | 70 → 70 |
+| App elapsed time, median | 117 ms |
+| App elapsed time, minimum–maximum | 103–191 ms |
+| Runs below 200 ms | 20 / 20 |
+| Throughput, median | 605.19 files/s; 8 246 835 points/s |
+| Files scanned → processed | 71 → 71 |
 | Points in → out | 967 500 → 250 431 (74.12% reduction) |
 | Size in → out | 180.01 MB → 11.72 MB (93.49% reduction) |
 | Distance in → out | 5836.77 km → 5820.79 km (0.27% reduction) |
+| Output matches `out/Test.gpx` byte for byte | 20 / 20 |
+
+Timings use the app's reported elapsed time, excluding Go compilation, process startup, and the reference-file comparison. Cache state and system load affect results; an earlier batch on this machine included a 272 ms outlier.
+
+Before the optimization, repeated runs on the same local dataset took 606–608 ms. For older context, commit `645ca3a` recorded about 590 ms on 2026-09-04 with eight workers on an Apple M1 Pro and a warm build cache; that dataset snapshot contained 70 files.
 
 ## Documentation
 

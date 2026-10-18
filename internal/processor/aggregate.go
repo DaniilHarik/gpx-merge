@@ -11,15 +11,17 @@ import (
 )
 
 type RunAggregation struct {
-	Totals      report.Totals
-	AllTracks   []gpx.Track
-	FileStats   []report.FileStat
-	WarningsOut []report.WarningItem
+	Totals       report.Totals
+	AllTracks    []gpx.Track
+	EncodedParts [][]byte
+	FileStats    []report.FileStat
+	WarningsOut  []report.WarningItem
 }
 
 func AggregateResults(results []pool.Result, filesScanned int, verbose bool, stdout io.Writer) RunAggregation {
 	totals := report.Totals{FilesScanned: filesScanned}
 	allTracks := make([]gpx.Track, 0)
+	encodedParts := make([][]byte, 0, len(results))
 	fileStats := make([]report.FileStat, 0, len(results))
 	warningsOut := make([]report.WarningItem, 0)
 
@@ -41,6 +43,7 @@ func AggregateResults(results []pool.Result, filesScanned int, verbose bool, std
 		}
 
 		allTracks = append(allTracks, payload.Tracks...)
+		encodedParts = append(encodedParts, payload.Encoded)
 		totals.FilesProcessed++
 		totals.PointsIn += payload.PointsIn
 		totals.PointsOut += payload.PointsOut
@@ -73,10 +76,11 @@ func AggregateResults(results []pool.Result, filesScanned int, verbose bool, std
 	}
 
 	return RunAggregation{
-		Totals:      totals,
-		AllTracks:   allTracks,
-		FileStats:   fileStats,
-		WarningsOut: warningsOut,
+		Totals:       totals,
+		AllTracks:    allTracks,
+		EncodedParts: encodedParts,
+		FileStats:    fileStats,
+		WarningsOut:  warningsOut,
 	}
 }
 

@@ -6,14 +6,17 @@ usage() {
 Usage: ./verify.sh [threshold_ms] [run.sh arguments...]
 
 Run run.sh and require its reported Elapsed time to be below the threshold.
-The default threshold is 650 milliseconds. Accepts 650 or 650ms.
+Also require out/Test.gpx and out/All.gpx to be byte-for-byte identical.
+Keep the reference file out/Test.gpx in place before running this script.
+The default threshold is 200 milliseconds. Accepts 200 or 200ms.
 Go compilation and startup time are excluded from the reported time.
 Exit 0 on success, 1 when the threshold is met or exceeded or timing is
-missing, and 2 for an invalid threshold. Errors from run.sh also fail.
+missing, or the files differ or cannot be compared. Exit 2 for an invalid
+threshold. Errors from run.sh also fail.
 
 Examples:
   ./verify.sh
-  ./verify.sh 650ms
+  ./verify.sh 200ms
   ./verify.sh 800 --workers 4
 EOF
 }
@@ -23,7 +26,7 @@ if [[ ${1:-} == --help || ${1:-} == -h ]]; then
   exit 0
 fi
 
-threshold=650
+threshold=200
 if [[ $# -gt 0 && $1 != --* ]]; then
   threshold=${1%ms}
   shift
@@ -44,6 +47,13 @@ else
   status=$?
   printf 'FAIL: run.sh failed with exit status %s.\n' "$status" >&2
   exit "$status"
+fi
+
+if diff -q -- out/Test.gpx out/All.gpx; then
+  printf 'PASS: out/Test.gpx and out/All.gpx are identical.\n'
+else
+  printf 'FAIL: out/Test.gpx and out/All.gpx must be identical and readable.\n' >&2
+  exit 1
 fi
 
 # PrintSummary rounds to milliseconds but uses Go duration notation, including

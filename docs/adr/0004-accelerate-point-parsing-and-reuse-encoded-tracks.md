@@ -1,0 +1,40 @@
+# ADR 0004: Read common GPX points faster and generate track XML once
+
+## Status
+
+Accepted and recorded on 2026-10-18.
+
+## Context
+
+The merge needed to pass the [local performance check](../../verify.sh) without changing its output. Profiling identified two costs:
+
+- Reading XML was the main CPU cost and created many temporary objects in memory.
+- The app generated the output XML twice: once to measure its size, then again to write the merged file.
+
+## Decision
+
+Use a small, dedicated reader for common track-point XML. When it encounters XML it cannot handle, let Go's standard XML decoder read that part. This keeps support for more complex input without making our reader implement every XML feature. The [point reader](../../internal/gpx/parse_points.go) defines which input it can handle.
+
+Each worker processes one input file at a time. It reads the file into memory, simplifies the tracks, and generates their output XML using Go's standard XML encoder. Keep that XML in memory so we can use the same bytes to measure its size and later write the merged file.
+
+Wait until every input file succeeds. Then write the saved XML pieces in source order, surrounded by the opening and closing GPX tags. A dry run counts the same output bytes without writing a file.
+
+## Alternatives considered
+
+- Keep the previous approach. It holds less source data in memory, but was too slow for the local performance goal.
+- Replace Go's XML decoder entirely. Our reader would then need to handle all supported XML syntax and reject invalid input correctly. That would be much more code to maintain and test.
+- Write each worker's output straight to the destination file. This would need a new way to preserve source order and prevent a later input error from leaving a partial merge. See [ADR 0002](0002-abort-on-file-errors.md).
+
+## Consequences
+
+- The merge uses more memory to save processing time. Active workers hold source bytes and tracks. Completed results hold the generated XML as well as the simplified tracks.
+- Files with common track-point XML benefit most. Files that need the standard decoder may take longer, even with the same number of points.
+- We must keep checking that both readers produce the same tracks and that reusing saved XML produces the same output file.
+- Output order, simplification rules, and coordinate formatting stay the same. An input-processing error still prevents the output write from starting.
+
+## Evidence
+
+- [Benchmark observations](../../README.md#performance-regression-test) record the machine, dataset, timings, and remaining timing variability.
+- [Reader compatibility tests](../../internal/gpx/parse_compat_test.go) compare the dedicated reader with Go's decoder, including complex and invalid XML.
+- [Output tests](../../internal/gpx/write_parts_test.go) check that joining saved XML produces the same bytes as generating the whole output at once. They also check byte counts and write errors.
+- [Application tests](../../internal/app/app_integration_test.go) check output order and behavior when an input file fails.
