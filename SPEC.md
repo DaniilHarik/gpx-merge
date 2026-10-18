@@ -1,217 +1,39 @@
-# Product Spec: Concurrent GPX Optimizer + Merger CLI
+# Product requirements
 
-## 1. Overview
+## Purpose and scope
 
-Build a Go CLI that reads a large set of highly precise GPX tracks from a local `data/` folder, optimizes each track to reduce file size, and produces one merged GPX output where source track boundaries are preserved and may be split into multiple `<trk>` parts when large segment endpoint gaps are detected.
+Prepare large local GPX collections for viewing by reducing point density and combining files. The output should load more easily while preserving recognizable paths and source track identity.
 
-The tool must process inputs concurrently for speed while keeping output deterministic and compatible with common GPX viewers.
-The conversion workflow must run in memory end-to-end (streaming/channels and in-memory structures), without writing intermediate GPX artifacts to disk.
+This is a lossy track conversion tool. Map matching, routing, coordinate reprojection, other export formats, a GUI, and lossless metadata archival are outside its scope.
 
-## 2. Problem Statement
+## Product constraints
 
-Large collections of high-precision GPX files can be slow to open and render in GPX viewers because they contain excessive point density and many files must be loaded individually.
+- Preserve source track boundaries, segment boundaries, and available track and segment names. Large gaps between segments may split a source track into separate output tracks because some viewers draw misleading straight connectors.
+- Preserve each segment's first and last points during simplification. Keep at least two points per output segment and respect the requested simplification error limit.
+- With the same inputs and options, keep output deterministic across worker counts and completion order. Optional generation timestamps make metadata vary between runs.
+- Process the conversion in memory without intermediate GPX files. Memory must accommodate accumulated output tracks as well as active workers.
+- Abort on a file-processing error before writing the merged output. A successful subset is not a completed merge. See [ADR 0002](docs/adr/0002-abort-on-file-errors.md).
+- Keep generated output outside the source collection to prevent later runs from ingesting it.
+- Provide a preview of savings and a run summary so operators can judge whether the conversion is useful.
 
-We need one command that:
+Exact flags, defaults, validation rules, and report formats live in the sources linked from the [CLI reference](docs/CLI_REFERENCE.md).
 
-1. Mass-processes GPX inputs efficiently.
-2. Reduces point count and serialized size without materially harming path shape.
-3. Exports one merged GPX that loads quickly, while preserving track boundaries (with optional gap-based split into multiple `<trk>` parts per source track).
+## Limits and acceptance
 
-## 3. Goals
+The simplification error limit applies before coordinate rounding. The exported coordinates can introduce additional error, so the limit is not an end-to-end accuracy guarantee.
 
-1. Read GPX files from `data/` (recursive).
-2. Optimize each track for smaller size.
-3. Merge all optimized tracks into one GPX file.
-4. Keep each original track boundary in output, with optional splitting into multiple `<trk>` parts when adjacent segment gaps exceed `--split-track-gap`.
-5. Use concurrency to speed up parse + optimize phases.
-6. Produce deterministic output ordering.
-7. Keep output broadly compatible with GPX 1.1 viewers.
-8. Run conversion in memory (no intermediate temp files).
+File-processing errors prevent the output write from starting. A later write failure can leave a partial file, and a metrics-log failure can occur after the GPX has been written. Final output replacement is not atomic.
 
-## 4. Non-Goals
+GPX 1.1 viewer compatibility remains an acceptance target. Check representative output in the intended viewer; XML serialization tests alone do not establish viewer compatibility or full schema validity.
 
-1. Editing map-matching/routing logic.
-2. Converting to non-GPX formats.
-3. Reprojecting coordinates.
-4. Building a GUI.
-5. Lossless compression of all optional metadata fields.
+The original performance targets are at least three times the speed of a single worker on large datasets and at least 40% point reduction on dense traces. These depend on the dataset and machine. Evaluate them with a fixed dataset and settings, alongside viewer loading time and memory use. The dated README measurements are historical evidence, not universal guarantees.
 
-## 5. Primary Users
+## Performance regression requirement
 
-1. Operators managing very large GPX collections.
-2. Developers preparing GPX bundles for viewer performance.
+- A fixed end-to-end workload completes within the configured performance budget (default: 5 seconds; override with `GPX_MERGE_PERFORMANCE_BUDGET`).
 
-## 6. CLI UX
+See [the development instructions](README.md#performance-regression-test) to run this check.
 
-Binary name: `gpx-merge`
+## Possible future work
 
-Example:
-
-```bash
-gpx-merge \
-  --input ./data \
-  --output ./out/merged_optimized.gpx \
-  --workers 8 \
-  --simplify 1.5 \
-  --max-error 3.0 \
-  --precision 6
-```
-
-### Core flags
-
-1. `--input <dir>`: root folder containing GPX files (default: `./data`)
-2. `--output <file>`: merged GPX output path (default: `./out/merged_optimized.gpx`); must be outside `--input`
-
-### Optional flags
-
-1. `--workers <n>`: worker pool size (default: `8`)
-2. `--simplify <meters>`: base simplification tolerance in meters
-3. `--max-error <meters>`: hard cap for allowed geometric deviation
-4. `--precision <digits>`: coordinate decimal precision in output (default: `6`)
-5. `--min-points <n>`: minimum points to keep per segment (default: `2`)
-6. `--split-track-gap <meters>`: split a track into multiple `<trk>` parts when adjacent segment endpoint gaps exceed this threshold (default: `1000`; `0` disables splitting)
-7. `--sort-segments-by-time`: reorder each track's segments by first timestamp before optimization when all segments in that track have parseable times
-8. `--keep-time`: preserve `<time>` tags (dropped by default)
-9. `--keep-ele`: preserve `<ele>` tags (dropped by default)
-10. `--dry-run`: report projected savings without writing output
-11. `--verbose`: per-file optimization stats
-12. `--include-run-metadata`: include generation stats in `<metadata>`
-13. `--metrics-csv <file>`: append one CSV row per completed run with points, workers, duration, and MB in/out
-
-## 7. Functional Requirements
-
-1. Discover all `*.gpx` files under `--input` recursively.
-2. Reject configurations where `--output` is inside `--input`, to avoid rediscovering previously merged output as input on later runs.
-3. Parse GPX 1.1 input safely; abort the run on any file error with a structured error message.
-4. For each input track:
-   - Preserve logical track identity (`<name>` when present, or filename fallback).
-   - Preserve segment names/labels when present.
-   - Optimize geometry per segment using line simplification.
-   - Enforce `--min-points` so segments remain valid.
-   - Drop nonessential metadata by default to reduce size; keep only geometry plus track/segment names unless explicitly retained by flags.
-5. Write one merged GPX:
-   - Single `<gpx>` root.
-   - Preserve source track boundaries in output `<trk>` elements; when adjacent segment endpoint gaps exceed `--split-track-gap`, split into additional track parts (`Track Name (part N)`).
-   - Track order deterministic (lexicographic path order by default).
-6. Emit run summary:
-   - Files scanned, files processed, failed files.
-   - Active worker count.
-   - Points in/out, bytes in/out, distance in/out, reduction percentages.
-   - Integer totals use grouped formatting with spaces for readability (example: `967 002`).
-   - When failures exist, print a `Failed files:` section with file path, stage, and reason.
-   - Total elapsed time and throughput.
-
-## 8. Optimization Strategy
-
-Use a two-stage lossy optimization tuned for viewer performance:
-
-1. Geometry simplification:
-   - Algorithm: Douglas-Peucker (or Visvalingam as optional future strategy).
-   - Distance metric: projected planar (equirectangular-style) point-to-segment distance in meters.
-   - Controls: `--simplify` and `--max-error`.
-2. Serialization compaction:
-   - Round latitude/longitude to `--precision` decimals.
-   - Remove nonessential whitespace in output XML.
-   - Drop metadata fields by default (global, track, segment, and point-level) except track/segment names.
-   - Allow selective retention only when explicitly requested (`--keep-time`, `--keep-ele`).
-
-Quality guardrails:
-
-1. Never emit invalid segments (<2 points).
-2. Never exceed `--max-error`.
-3. Preserve first and last point of every segment.
-
-## 9. Concurrency Design
-
-Phases:
-
-1. Discover phase:
-   - Walks input tree, builds deterministic file list, and records file sizes.
-2. Worker pool (`--workers`):
-   - Schedules discovered files by descending size before submission to reduce large-file tail latency.
-   - Parse + optimize files in parallel via `errgroup`; results written directly to a pre-allocated slice at each file's original discovery index.
-3. Aggregation + write phase:
-   - Aggregates totals/tracks, then writes merged output sequentially.
-
-Design constraints:
-
-1. Output must be deterministic regardless of worker scheduling.
-2. `errgroup.WithContext` manages the worker pool: `g.SetLimit(workers)` bounds parallelism, larger files are submitted first, workers write results directly to a pre-allocated `collected` slice at their file's original index, and `g.Wait()` blocks until all goroutines finish. The first error cancels the shared context and is returned by `g.Wait()`.
-3. No writer-stage backpressure during worker processing because writing starts after result collection.
-4. Context cancellation support on fatal error or SIGINT, with workers checking the shared context between major processing stages, parser token reads, and optimized segments.
-5. No intermediate on-disk conversion artifacts; only final output is written.
-6. Architectural split follows Functional Core, Imperative Shell:
-   - `internal/app` owns imperative orchestration and side effects.
-   - `internal/processor` and `internal/optimize` own transformation/aggregation core logic.
-   - `internal/pool` owns worker-pool concurrency mechanics.
-
-## 10. Output GPX Requirements
-
-1. GPX version `1.1` and creator set to the CLI name/version.
-2. Preserve source track boundaries as `<trk>` elements (no collapsing into one giant track); a single source track may produce multiple `<trk>` parts when gap-based splitting is enabled and thresholds are exceeded.
-3. Preserve segment boundaries when available (`<trkseg>`).
-4. Default payload should contain only fields required for rendering/performance, plus track and segment names.
-5. Optional run metadata (disabled by default):
-   - Include aggregate counts in `<metadata><desc>`.
-   - Include generation timestamp.
-
-## 11. Performance Targets
-
-Targets on a modern laptop (baseline expectations):
-
-1. At least 3x faster than single-threaded mode for large datasets.
-2. At least 40% point reduction on dense precision traces (dataset-dependent).
-3. Merged output opens perceptibly faster in common GPX viewers vs original multi-file set.
-4. Peak memory scales with worker buffers plus accumulated successful results/tracks prior to final write.
-
-## 12. Error Handling
-
-1. Any per-file error aborts the run immediately (all-or-nothing): no partial output is written.
-2. Final exit code:
-   - `0` if all files processed successfully.
-   - `1` if any file failed during processing.
-   - `2` for configuration/usage errors and runtime setup/output/reporting errors.
-3. The failing file path and stage are included in the error message written to stderr.
-
-## 13. Observability
-
-1. Human-readable summary by default.
-2. Optional `--metrics-csv <file>` for append-only run log rows:
-   - Header: `started_at_utc,points_in,points_out,workers,duration_ms,mb_in,mb_out`
-   - One row appended per completed run.
-3. Human summary output shape:
-   - `Files scanned`, `Files processed`, `Files failed`, `Workers`.
-   - `Points`, `Bytes`, `Distance`, `Elapsed`, `Throughput`.
-   - If warnings occur, print a `Warnings:` section:
-     - Segment discontinuity warnings for adjacent `<trkseg>` gaps over `1000m` (including split-threshold outcome).
-     - Segment reorder warnings when `--sort-segments-by-time` changes one or more tracks.
-
-## 14. Testing Requirements
-
-1. Unit tests:
-   - Simplification correctness and max-error enforcement.
-   - Precision rounding behavior.
-   - Deterministic ordering with concurrent workers.
-2. Integration tests:
-   - Run aborts on an invalid file; no partial output written.
-   - Large synthetic dataset under `data/`.
-3. Golden tests:
-   - Stable XML output shape and compatibility checks.
-4. Benchmark tests:
-   - Throughput and memory profiles across worker counts.
-
-## 15. Acceptance Criteria
-
-1. Running CLI on `data/` produces one merged GPX at `--output` (or default: `./out/merged_optimized.gpx`).
-2. Merged GPX contains `<trk>` elements corresponding to each successfully processed source track, with optional additional `(part N)` track splits when segment gaps exceed `--split-track-gap` (or no splits when set to `0`).
-3. Size and point count are reduced relative to raw inputs for dense tracks.
-4. Output is deterministic across repeated runs with same inputs/flags.
-5. Tool processes files concurrently and reports measurable speedup vs `--workers 1`.
-6. Result opens successfully in at least one target GPX viewer without schema errors.
-
-## 16. Future Enhancements
-
-1. Multiple simplification strategies (`--strategy dp|vw`).
-2. Per-track adaptive tolerance based on local curvature.
-3. Optional output splitting by region/date for huge merged datasets.
-4. Embedded spatial index sidecar for faster viewer prefiltering.
+Earlier specifications listed alternative simplification algorithms, adaptive tolerance, region or date output splitting, and a spatial-index sidecar. These remain ideas, not supported features or delivery commitments.
